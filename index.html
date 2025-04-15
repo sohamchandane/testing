@@ -1,84 +1,137 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smartwatch BLE Scanner</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Smartwatch BLE Scanner</title>
 </head>
 <body>
-    <h2>Smartwatch Bluetooth Scanner</h2>
-    <button onclick="connectSmartwatch()">Scan & Connect</button>
-    
-    <div class="charUUID"></div>
-    <div class="output"></div>
-    
-    <h3>Heart Rate:</h3>
-    <p id="heartRateDisplay">Waiting for data...</p> 
-    
-    <h3>SpO2:</h3>
-    <p id="spo2Display">Waiting for data...</p> 
+  <h2>Smartwatch Bluetooth Scanner</h2>
+  <button onclick="connectSmartwatch()">Scan & Connect</button>
 
-    <script>
-        let heartRateChar = null;
-        let spo2Char = null;
-        let device;
+  <div class="charUUID"></div>
+  <div class="output"></div>
 
-        async function connectSmartwatch() {
-            const output = document.querySelector('.output');
-            console.log("Scanning for Bluetooth devices...");
-            
-            try {
-                const device = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
-                    optionalServices: ['heart_rate'] // Request access to Heart Rate service explicitly
-                });
+  <h3>Heart Rate Readings:</h3>
+  <div id="heartRateDisplay">Waiting for data...</div> 
 
-                console.log("Selected device:", device.name || "Unnamed Device");
+  <h4>Average Heart Rate:</h4>
+  <p id="averageHeartRate">0 bpm</p>
 
-                const server = await device.gatt.connect();
-                output.textContent = "Connected to " + String(device.name);
+  <h3>SpO2:</h3>
+  <p id="spo2Display">Waiting for data...</p> 
 
-                const services = await server.getPrimaryServices();
+  <script>
+    let heartRateChar = null;
+    let spo2Char = null;
+    let heartRates = [];
 
-                for (const service of services) {
-                    output.textContent += `\nService UUID: ${service.uuid}`;
-                    const characteristics = await service.getCharacteristics();
+    async function connectSmartwatch() {
+      const output = document.querySelector('.output');
+      const hrDiv = document.getElementById("heartRateDisplay");
+      const avgHRDisplay = document.getElementById("averageHeartRate");
+      console.log("Scanning for Bluetooth devices...");
 
-                    for (const characteristic of characteristics) {
-                        console.log(`Characteristic UUID: ${characteristic.uuid}`);
-                        output.textContent += `\n\tCharacteristic UUID: ${characteristic.uuid}`;
+      try {
+        const device = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [
+            'heart_rate', // 0x180D
+            '0000aaa0-0000-1000-8000-aabbccddeeff',
+            '0000d0ff-3c17-d293-8e48-14fe2e4da212',
+            '00006287-3c17-d293-8e48-14fe2e4da212',
+            '00001822-0000-1000-8000-00805f9b34fb', // Pulse Oximeter
+            '0000181d-0000-1000-8000-00805f9b34fb'  // Weight Scale
+          ]
+        });
 
-                        // Heart Rate Measurement Characteristic (0x2A37)
-                        if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb') {
-                            heartRateChar = characteristic;
-                            console.log("Heart Rate characteristic found!");
+        const server = await device.gatt.connect();
+        output.textContent = "Connected to " + String(device.name);
 
-                            await heartRateChar.startNotifications();
-                            heartRateChar.addEventListener('characteristicvaluechanged', handleHeartRateData);
-                        }
-                    }
-                }
-            } catch (error) {
-                console.error("Error connecting to device:", error);
-                output.textContent = "Error connecting to device: " + error;
-            }
-        }
+        const services = await server.getPrimaryServices();
 
-        function handleHeartRateData(event) {
-            const value = event.target.value;
-            const flags = value.getUint8(0);
-            let hr;
+        for (const service of services) {
+          output.textContent += `\nService UUID: ${service.uuid}`;
+          const characteristics = await service.getCharacteristics();
 
-            // Bit 0 of flags: 0 = uint8, 1 = uint16
-            if ((flags & 0x01) === 0) {
-                hr = value.getUint8(1);
-            } else {
-                hr = value.getUint16(1, true); // littleEndian = true
+          for (const characteristic of characteristics) {
+            console.log(`Characteristic UUID: ${characteristic.uuid}`);
+            output.textContent += `\n\tCharacteristic UUID: ${characteristic.uuid}`;
+
+            // Heart Rate Measurement (Standard)
+            if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb') {
+              heartRateChar = characteristic;
+              console.log("Heart Rate characteristic found!");
+
+              await heartRateChar.startNotifications();
+              heartRateChar.addEventListener('characteristicvaluechanged', handleHeartRateData);
             }
 
-            console.log("Heart Rate:", hr);
-            document.getElementById("heartRateDisplay").textContent = `${hr} bpm, ${value}, ${flags}`;
+            // SpO2 characteristic - standard or proprietary
+            if (
+              characteristic.uuid === '00002a5f-0000-1000-8000-00805f9b34fb' || // Standard SpO2
+              characteristic.uuid.includes('d0ff') ||
+              characteristic.uuid.includes('aaa0') ||
+              characteristic.uuid.includes('6287')) {
+                spo2Char = characteristic;
+                console.log("SpO2 characteristic found:", characteristic.uuid);
+
+                await spo2Char.startNotifications();
+                spo2Char.addEventListener('characteristicvaluechanged', handleSpO2Data);
+            }
+          }
         }
-    </script>
+      } catch (error) {
+        console.error("Error connecting to device:", error);
+        output.textContent = "Error connecting to device: " + error;
+      }
+    }
+
+    function handleHeartRateData(event) {
+      const value = event.target.value;
+      const flags = value.getUint8(0);
+      let hr;
+
+      if ((flags & 0x01) === 0) {
+        hr = value.getUint8(1);
+      } else {
+        hr = value.getUint16(1, true);
+      }
+
+      console.log("Heart Rate:", hr);
+
+      const hrDisplay = document.getElementById("heartRateDisplay");
+      const avgDisplay = document.getElementById("averageHeartRate");
+
+      const line = document.createElement("p");
+      line.textContent = `${hr} bpm`;
+      hrDisplay.appendChild(line);
+
+      heartRates.push(hr);
+      const sum = heartRates.reduce((a, b) => a + b, 0);
+      const avg = (sum / heartRates.length).toFixed(1);
+      avgDisplay.textContent = `${avg} bpm`;
+    }
+
+    function handleSpO2Data(event) {
+      const value = event.target.value;
+
+      // Some custom services may start at 0 or 1, test and adjust if needed
+      let spo2;
+      try {
+        spo2 = value.getUint8(1);
+      } catch (e) {
+        try {
+          spo2 = value.getUint8(0);
+        } catch (e) {
+          console.warn("Unknown SpO2 data format");
+          spo2 = "N/A";
+        }
+      }
+
+      console.log("SpO2:", spo2);
+      document.getElementById("spo2Display").textContent = `${spo2} %`;
+    }
+  </script>
 </body>
 </html>
