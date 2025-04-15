@@ -37,11 +37,7 @@
         const device = await navigator.bluetooth.requestDevice({
           acceptAllDevices: true,
           optionalServices: [
-            'heart_rate', // 0x180D
-            '0000ffd1-0000-1000-8000-00805f9b34fb', // SpO2 UUIDs
-            '0000ffd2-0000-1000-8000-00805f9b34fb',
-            '00006387-3c17-d293-8e48-14fe2e4da212', // Custom SpO2 UUID
-            '00006487-3c17-d293-8e48-14fe2e4da212'  // Custom SpO2 UUID
+            'heart_rate'
           ]
         });
 
