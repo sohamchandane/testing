@@ -46,12 +46,13 @@
                         output.textContent += `\n\tCharacteristic UUID: ${characteristic.uuid}`;
 
                         // Identify Heart Rate Characteristic
-                        // if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb') {
-                        //     heartRateChar = characteristic;
-                        //     console.log("Heart Rate characteristic found!");
-                        //     await heartRateChar.startNotifications();
-                        //     heartRateChar.addEventListener('characteristicvaluechanged', handleHeartRateData);
-                        // }
+                        if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb') {
+                            heartRateChar = characteristic;
+                            console.log("Heart Rate characteristic found!");
+
+                            await heartRateChar.startNotifications();
+                            heartRateChar.addEventListener('characteristicvaluechanged', handleHeartRateData);
+                        }
                     }
                 }
             }
@@ -59,6 +60,15 @@
                 console.error("Error connecting to device:", error);
                 output.textContent = "Error connecting to device: " + error;
             }
+        }
+
+        function handleHeartRateData(event) {
+            const value = event.target.value;
+            const flags = value.getUint8(0);
+            let hr;
+
+            console.log("Heart Rate:", hr);
+            document.getElementById("heartRateDisplay").textContent = `${value, flags}`;
         }
 
     </script>
