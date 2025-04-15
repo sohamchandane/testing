@@ -25,34 +25,37 @@
             const output = document.querySelector('.output');
             console.log("Scanning for Bluetooth devices...");
             
-            device = await navigator.bluetooth.requestDevice({
-                acceptAllDevices: true
-            });
+            try{
+                const device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true
+                });
 
-            console.log("Selected device:", device.name || "Unnamed Device");
+                console.log("Selected device:", device.name || "Unnamed Device");
 
-            const server = await device.gatt.connect();
-            output.textContent = "Connected to" + String(device.name);
+                const server = await device.gatt.connect();
+                output.textContent = "Connected to" + String(device.name);
 
-            const services = await server.getPrimaryServices();
+                const services = await server.getPrimaryServices();
 
-            for (const service of services) {
-                output.textContent += `\nService UUID: ${service.uuid}`;
-                const characteristics = await service.getCharacteristics();
+                for (const service of services) {
+                    output.textContent += `\nService UUID: ${service.uuid}`;
+                    const characteristics = await service.getCharacteristics();
 
-                for (const characteristic of characteristics) {
-                    console.log(`Characteristic UUID: ${characteristic.uuid}`);
-                    output.textContent += `\n\tCharacteristic UUID: ${characteristic.uuid}`;
+                    for (const characteristic of characteristics) {
+                        console.log(`Characteristic UUID: ${characteristic.uuid}`);
+                        output.textContent += `\n\tCharacteristic UUID: ${characteristic.uuid}`;
 
-                    // Identify Heart Rate Characteristic
-                    // if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb') {
-                    //     heartRateChar = characteristic;
-                    //     console.log("Heart Rate characteristic found!");
-                    //     await heartRateChar.startNotifications();
-                    //     heartRateChar.addEventListener('characteristicvaluechanged', handleHeartRateData);
-                    // }
+                        // Identify Heart Rate Characteristic
+                        // if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb') {
+                        //     heartRateChar = characteristic;
+                        //     console.log("Heart Rate characteristic found!");
+                        //     await heartRateChar.startNotifications();
+                        //     heartRateChar.addEventListener('characteristicvaluechanged', handleHeartRateData);
+                        // }
+                    }
                 }
             }
+            
         }
 
     </script>
