@@ -68,16 +68,19 @@
             }
 
             // SpO2 characteristic - standard or proprietary
-            if (
-              characteristic.uuid === '00002a5f-0000-1000-8000-00805f9b34fb' || // Standard SpO2
-              characteristic.uuid.includes('d0ff') ||
-              characteristic.uuid.includes('aaa0') ||
-              characteristic.uuid.includes('6287')) {
-                spo2Char = characteristic;
-                console.log("SpO2 characteristic found:", characteristic.uuid);
+            const possibleSpO2UUIDs = [
+              '0000ffd1-0000-1000-8000-00805f9b34fb',
+              '0000ffd2-0000-1000-8000-00805f9b34fb',
+              '00006387-3c17-d293-8e48-14fe2e4da212',
+              '00006487-3c17-d293-8e48-14fe2e4da212'
+            ];
 
-                await spo2Char.startNotifications();
-                spo2Char.addEventListener('characteristicvaluechanged', handleSpO2Data);
+            if (possibleSpO2UUIDs.includes(characteristic.uuid)) {
+              spo2Char = characteristic;
+              console.log("SpO2 characteristic found:", characteristic.uuid);
+
+              await spo2Char.startNotifications();
+              spo2Char.addEventListener('characteristicvaluechanged', handleSpO2Data);
             }
           }
         }
