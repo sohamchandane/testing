@@ -36,10 +36,10 @@
         const device = await navigator.bluetooth.requestDevice({
           acceptAllDevices: true,
           optionalServices: [
-            'heart_rate', // 0x180D
-            '0000aaa0-0000-1000-8000-aabbccddeeff',
-            '0000d0ff-3c17-d293-8e48-14fe2e4da212',
-            '00006287-3c17-d293-8e48-14fe2e4da212'
+            'heart_rate' // 0x180D
+            // '0000aaa0-0000-1000-8000-aabbccddeeff',
+            // '0000d0ff-3c17-d293-8e48-14fe2e4da212',
+            // '00006287-3c17-d293-8e48-14fe2e4da212'
             // '00001822-0000-1000-8000-00805f9b34fb', // Pulse Oximeter
             // '0000181d-0000-1000-8000-00805f9b34fb'  // Weight Scale
           ]
