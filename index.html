@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smartwatch BLE Scanner</title>
+</head>
+<body>
+    <h2>Smartwatch Bluetooth Scanner</h2>
+    <button onclick="connectSmartwatch()">Scan & Connect</button>
+    <button onclick="requestHeartRate()">Take Heart Rate Reading</button> 
+    <button onclick="requestSpO2()">Take SpO2 Reading</button> 
+    
+    <h3>Heart Rate:</h3>
+    <p id="heartRateDisplay">Waiting for data...</p> 
+    <h3>SpO2:</h3>
+    <p id="spo2Display">Waiting for data...</p> 
+
+    <script>
+        let heartRateChar = null;
+        let spo2Char = null;
+        let device;
+
+        async function connectSmartwatch() {
+            try {
+                console.log("Scanning for Bluetooth devices...");
+                
+                device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: ['0000180d-0000-1000-8000-00805f9b34fb', '00001822-0000-1000-8000-00805f9b34fb'] // Heart Rate & SpO2 services
+                });
+
+                console.log("Selected device:", device.name || "Unnamed Device");
+
+                const server = await device.gatt.connect();
+                console.log("Connected to", device.name);
+
+                const services = await server.getPrimaryServices();
+                for (const service of services) {
+                    console.log(`Service UUID: ${service.uuid}`);
+                    const characteristics = await service.getCharacteristics();
+                    for (const characteristic of characteristics) {
+                        console.log(`  → Characteristic UUID: ${characteristic.uuid}`);
+
+                        // Identify Heart Rate Characteristic
+                        if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb') {
+                            heartRateChar = characteristic;
+                            console.log("Heart Rate characteristic found!");
+                            await heartRateChar.startNotifications();
+                            heartRateChar.addEventListener('characteristicvaluechanged', handleHeartRateData);
+                        }
+
+                        // Identify SpO2 Characteristic
+                        if (characteristic.uuid === '00002a5f-0000-1000-8000-00805f9b34fb') {
+                            spo2Char = characteristic;
+                            console.log("SpO2 characteristic found!");
+                            await spo2Char.startNotifications();
+                            spo2Char.addEventListener('characteristicvaluechanged', handleSpO2Data);
+                        }
+                    }
+                }
+
+                document.getElementById("heartRateDisplay").textContent = heartRateChar ? "Connected! Waiting for heart rate..." : "Heart Rate Not Found";
+                document.getElementById("spo2Display").textContent = spo2Char ? "Connected! Waiting for SpO2..." : "SpO2 Not Found";
+
+            } catch (error) {
+                console.error("Error:", error);
+                document.getElementById("heartRateDisplay").textContent = "Error: Could not connect";
+                document.getElementById("spo2Display").textContent = "Error: Could not connect";
+            }
+        }
+
+        async function requestHeartRate() {
+            if (!heartRateChar) {
+                alert("Please connect to the smartwatch first!");
+                return;
+            }
+
+            try {
+                console.log("Requesting heart rate...");
+                await heartRateChar.startNotifications();
+                document.getElementById("heartRateDisplay").textContent = "Waiting for heart rate...";
+            } catch (error) {
+                console.error("Error:", error);
+                document.getElementById("heartRateDisplay").textContent = "Error: Could not read heart rate.";
+            }
+        }
+
+        async function requestSpO2() {
+            if (!spo2Char) {
+                alert("Please connect to the smartwatch first!");
+                return;
+            }
+
+            try {
+                console.log("Requesting SpO2...");
+                await spo2Char.startNotifications();
+                document.getElementById("spo2Display").textContent = "Waiting for SpO2...";
+            } catch (error) {
+                console.error("Error:", error);
+                document.getElementById("spo2Display").textContent = "Error: Could not read SpO2.";
+            }
+        }
+
+        function handleHeartRateData(event) {
+            console.log("Received heart rate data!");
+
+            const value = event.target.value;
+            console.log("Raw heart rate data:", new Uint8Array(value.buffer));
+
+            const heartRate = parseHeartRate(value);
+            document.getElementById("heartRateDisplay").textContent = `💓 ${heartRate} BPM`;
+        }
+
+        function handleSpO2Data(event) {
+            console.log("Received SpO2 data!");
+
+            const value = event.target.value;
+            console.log("Raw SpO2 data:", new Uint8Array(value.buffer));
+
+            const spo2 = parseSpO2(value);
+            document.getElementById("spo2Display").textContent = `🩸 ${spo2}%`;
+        }
+
+        function parseHeartRate(value) {
+            let flags = value.getUint8(0);
+            let rate16Bits = flags & 0x01;
+            return rate16Bits ? value.getUint16(1, true) : value.getUint8(1);
+        }
+
+        function parseSpO2(value) {
+            return value.getUint8(1); // Assuming single-byte SpO2 value
+        }
+    </script>
+</body>
+</html>
