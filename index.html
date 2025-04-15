@@ -11,8 +11,10 @@
     
     <div class="charUUID"></div>
     <div class="output"></div>
+    
     <h3>Heart Rate:</h3>
     <p id="heartRateDisplay">Waiting for data...</p> 
+    
     <h3>SpO2:</h3>
     <p id="spo2Display">Waiting for data...</p> 
 
@@ -25,15 +27,16 @@
             const output = document.querySelector('.output');
             console.log("Scanning for Bluetooth devices...");
             
-            try{
+            try {
                 const device = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true
+                    acceptAllDevices: true,
+                    optionalServices: ['heart_rate'] // Request access to Heart Rate service explicitly
                 });
 
                 console.log("Selected device:", device.name || "Unnamed Device");
 
                 const server = await device.gatt.connect();
-                output.textContent = "Connected to" + String(device.name);
+                output.textContent = "Connected to " + String(device.name);
 
                 const services = await server.getPrimaryServices();
 
@@ -45,7 +48,7 @@
                         console.log(`Characteristic UUID: ${characteristic.uuid}`);
                         output.textContent += `\n\tCharacteristic UUID: ${characteristic.uuid}`;
 
-                        // Identify Heart Rate Characteristic
+                        // Heart Rate Measurement Characteristic (0x2A37)
                         if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb') {
                             heartRateChar = characteristic;
                             console.log("Heart Rate characteristic found!");
@@ -55,8 +58,7 @@
                         }
                     }
                 }
-            }
-            catch (error) {
+            } catch (error) {
                 console.error("Error connecting to device:", error);
                 output.textContent = "Error connecting to device: " + error;
             }
@@ -67,10 +69,16 @@
             const flags = value.getUint8(0);
             let hr;
 
-            console.log("Heart Rate:", hr);
-            document.getElementById("heartRateDisplay").textContent = `${value, flags}`;
-        }
+            // Bit 0 of flags: 0 = uint8, 1 = uint16
+            if ((flags & 0x01) === 0) {
+                hr = value.getUint8(1);
+            } else {
+                hr = value.getUint16(1, true); // littleEndian = true
+            }
 
+            console.log("Heart Rate:", hr);
+            document.getElementById("heartRateDisplay").textContent = `${hr} bpm`;
+        }
     </script>
 </body>
 </html>
