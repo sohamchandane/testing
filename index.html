@@ -55,7 +55,10 @@
                     }
                 }
             }
-            
+            catch (error) {
+                console.error("Error connecting to device:", error);
+                output.textContent = "Error connecting to device: " + error;
+            }
         }
 
     </script>
