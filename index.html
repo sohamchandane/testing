@@ -7,9 +7,14 @@
 </head>
 <body>
     <h2>Smartwatch Bluetooth Scanner</h2>
+    <button onclick="connectSmartwatch()">Scan & Connect</button>
     
     <div class="charUUID"></div>
     <div class="output"></div>
+    <h3>Heart Rate:</h3>
+    <p id="heartRateDisplay">Waiting for data...</p> 
+    <h3>SpO2:</h3>
+    <p id="spo2Display">Waiting for data...</p> 
 
     <script>
         let heartRateChar = null;
@@ -49,6 +54,7 @@
                 }
             }
         }
+
     </script>
 </body>
 </html>
