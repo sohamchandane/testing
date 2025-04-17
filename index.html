@@ -39,7 +39,7 @@
 <body>
   <h2>Smartwatch Bluetooth Scanner</h2>
   <button onclick="connectSmartwatch()">Scan & Connect</button>
-  <button onclick="triggerSpO2()">Trigger SpO2 Measurement</button>
+  <button onclick="triggerHeartRate()">Trigger Heart Rate</button>
 
   <div class="charUUID"></div>
   <div class="output"></div>
@@ -56,10 +56,10 @@
 
   <script>
     let heartRateChar = null;
+    let heartRateControlChar = null;
     let spo2Char = null;
     let heartRates = [];
     let debugLogs = [];
-    let potentialSpO2Characteristics = [];
 
     async function connectSmartwatch() {
       const output = document.querySelector('.output');
@@ -68,7 +68,7 @@
       const avgHRDisplay = document.getElementById("averageHeartRate");
       const spo2Div = document.getElementById("spo2Display");
       console.log("Scanning for Bluetooth devices...");
-      debugLogs.push("Scanning for Bluetooth devices...");
+      debugLogs.push(`[${new Date().toLocaleTimeString()}] Scanning for Bluetooth devices...`);
       debug.textContent = debugLogs.join('\n');
 
       try {
@@ -85,7 +85,7 @@
         // Connect to GATT server
         const server = await device.gatt.connect();
         output.textContent = `Connected to ${device.name}`;
-        debugLogs.push(`Connected to ${device.name}`);
+        debugLogs.push(`[${new Date().toLocaleTimeString()}] Connected to ${device.name}`);
         debug.textContent = debugLogs.join('\n');
 
         // Get all primary services
@@ -93,78 +93,79 @@
 
         for (const service of services) {
           output.textContent += `\nService UUID: ${service.uuid}`;
-          debugLogs.push(`Service UUID: ${service.uuid}`);
+          debugLogs.push(`[${new Date().toLocaleTimeString()}] Service UUID: ${service.uuid}`);
           const characteristics = await service.getCharacteristics();
 
           for (const characteristic of characteristics) {
-            console.log(`Characteristic UUID: ${characteristic.uuid}, Properties: `, characteristic.properties);
+            const props = {
+              read: !!characteristic.properties.read,
+              write: !!characteristic.properties.write,
+              notify: !!characteristic.properties.notify
+            };
+            console.log(`Characteristic UUID: ${characteristic.uuid}, Properties: `, props);
             output.textContent += `\n\tCharacteristic UUID: ${characteristic.uuid}`;
-            debugLogs.push(`Characteristic UUID: ${characteristic.uuid}, Properties: ${JSON.stringify(characteristic.properties)}`);
+            debugLogs.push(`[${new Date().toLocaleTimeString()}] Characteristic UUID: ${characteristic.uuid}, Properties: ${JSON.stringify(props)}`);
             debug.textContent = debugLogs.join('\n');
 
             // Heart Rate Measurement
             if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb') {
               heartRateChar = characteristic;
               console.log("Heart Rate characteristic found!");
-              debugLogs.push("Heart Rate characteristic found!");
-              await heartRateChar.startNotifications();
-              heartRateChar.addEventListener('characteristicvaluechanged', handleHeartRateData);
+              debugLogs.push(`[${new Date().toLocaleTimeString()}] Heart Rate characteristic found!`);
+              try {
+                await heartRateChar.startNotifications();
+                heartRateChar.addEventListener('characteristicvaluechanged', handleHeartRateData);
+                debugLogs.push(`[${new Date().toLocaleTimeString()}] Heart Rate notifications enabled`);
+              } catch (e) {
+                console.error("Failed to start heart rate notifications:", e);
+                debugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to start heart rate notifications: ${e}`);
+              }
             }
 
-            // Store potential SpO2 characteristics
-            if (service.uuid === '00006287-3c17-d293-8e48-14fe2e4da212' || service.uuid === '0000d0ff-3c17-d293-8e48-14fe2e4da212') {
-              potentialSpO2Characteristics.push(characteristic);
-              console.log(`Added potential SpO2 characteristic: ${characteristic.uuid}`);
+            // Heart Rate Control Point
+            if (characteristic.uuid === '00002a39-0000-1000-8000-00805f9b34fb') {
+              heartRateControlChar = characteristic;
+              console.log("Heart Rate Control Point found!");
+              debugLogs.push(`[${new Date().toLocaleTimeString()}] Heart Rate Control Point found!`);
+            }
 
-              // Try notifications
-              if (characteristic.properties.notify) {
-                spo2Char = characteristic;
-                console.log("SpO2 characteristic with notify found:", characteristic.uuid);
-                debugLogs.push(`SpO2 characteristic with notify found: ${characteristic.uuid}`);
-                await characteristic.startNotifications();
-                characteristic.addEventListener('characteristicvaluechanged', handleSpO2Data);
-              }
-
-              // Try reading
-              if (characteristic.properties.read) {
-                console.log(`Reading SpO2 characteristic: ${characteristic.uuid}`);
-                debugLogs.push(`Reading SpO2 characteristic: ${characteristic.uuid}`);
+            // SpO2 (focus on 0000ffd2 for now)
+            if (characteristic.uuid === '0000ffd2-0000-1000-8000-00805f9b34fb') {
+              spo2Char = characteristic;
+              console.log("SpO2 characteristic found:", characteristic.uuid);
+              debugLogs.push(`[${new Date().toLocaleTimeString()}] SpO2 characteristic found: ${characteristic.uuid}`);
+              if (props.read) {
                 try {
                   const value = await characteristic.readValue();
                   handleSpO2Data({ target: { value, uuid: characteristic.uuid } });
-                  // Poll every 2 seconds for 0000ffd2, 5 seconds for others
-                  const interval = characteristic.uuid === '0000ffd2-0000-1000-8000-00805f9b34fb' ? 2000 : 5000;
+                  // Poll every 2 seconds
                   setInterval(async () => {
                     try {
                       const value = await characteristic.readValue();
                       handleSpO2Data({ target: { value, uuid: characteristic.uuid } });
                     } catch (e) {
                       console.warn(`Failed to poll ${characteristic.uuid}:`, e);
-                      debugLogs.push(`Failed to poll ${characteristic.uuid}: ${e}`);
+                      debugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to poll ${characteristic.uuid}: ${e}`);
                     }
-                  }, interval);
+                  }, 2000);
                 } catch (e) {
                   console.warn(`Failed to read ${characteristic.uuid}:`, e);
-                  debugLogs.push(`Failed to read ${characteristic.uuid}: ${e}`);
+                  debugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to read ${characteristic.uuid}: ${e}`);
                 }
               }
             }
           }
         }
 
-        // Try initial write to trigger SpO2
-        await triggerSpO2();
+        // Trigger heart rate initially
+        await triggerHeartRate();
 
-        if (!spo2Char) {
-          console.warn("No SpO2 characteristic with notifications found.");
-          debugLogs.push("No SpO2 characteristic with notifications found.");
-          output.textContent += `\nNo SpO2 characteristic with notifications found. Check debug logs.`;
-        }
+        debug.textContent = debugLogs.join('\n');
 
         // Handle disconnections
         device.addEventListener('gattserverdisconnected', () => {
           output.textContent = 'Device disconnected. Please reconnect.';
-          debugLogs.push('Device disconnected.');
+          debugLogs.push(`[${new Date().toLocaleTimeString()}] Device disconnected.`);
           spo2Div.textContent = 'Disconnected';
           hrDiv.textContent = 'Disconnected';
           avgHRDisplay.textContent = '0 bpm';
@@ -173,47 +174,57 @@
 
       } catch (error) {
         console.error("Error connecting to device:", error);
-        debugLogs.push(`Error connecting to device: ${error}`);
+        debugLogs.push(`[${new Date().toLocaleTimeString()}] Error connecting to device: ${error}`);
         output.textContent = `Error connecting to device: ${error}`;
         debug.textContent = debugLogs.join('\n');
       }
     }
 
-    async function triggerSpO2() {
+    async function triggerHeartRate() {
       const debug = document.querySelector('.debug');
-      console.log("Triggering SpO2 measurement...");
-      debugLogs.push("Triggering SpO2 measurement...");
-      debug.textContent = debugLogs.join('\n');
+      console.log("Triggering heart rate measurement...");
+      debugLogs.push(`[${new Date().toLocaleTimeString()}] Triggering heart rate measurement...`);
 
-      const writeValues = [
-        new Uint8Array([0x01]),
-        new Uint8Array([0x00]),
-        new Uint8Array([0x02]),
-        new Uint8Array([0xAA, 0x01]),
-        new Uint8Array([0x55, 0x01]),
-        new Uint8Array([0xFF]),
-        new Uint8Array([0x07]) // Common for some health devices
-      ];
+      // Try re-enabling notifications
+      if (heartRateChar) {
+        try {
+          await heartRateChar.startNotifications();
+          console.log("Heart rate notifications re-enabled");
+          debugLogs.push(`[${new Date().toLocaleTimeString()}] Heart rate notifications re-enabled`);
+        } catch (e) {
+          console.warn("Failed to re-enable heart rate notifications:", e);
+          debugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to re-enable heart rate notifications: ${e}`);
+        }
+      }
 
-      for (const characteristic of potentialSpO2Characteristics) {
-        if (characteristic.properties.write) {
-          for (const value of writeValues) {
-            try {
-              await characteristic.writeValue(value);
-              console.log(`Wrote ${value} to ${characteristic.uuid}`);
-              debugLogs.push(`Wrote ${value} to ${characteristic.uuid}`);
-            } catch (e) {
-              console.warn(`Failed to write ${value} to ${characteristic.uuid}:`, e);
-              debugLogs.push(`Failed to write ${value} to ${characteristic.uuid}: ${e}`);
-            }
+      // Try writing to Heart Rate Control Point
+      if (heartRateControlChar) {
+        const writeValues = [
+          new Uint8Array([0x01]), // Reset energy expended (common trigger)
+          new Uint8Array([0x00]),
+          new Uint8Array([0x02])
+        ];
+        for (const value of writeValues) {
+          try {
+            await heartRateControlChar.writeValue(value);
+            console.log(`Wrote ${value} to Heart Rate Control Point`);
+            debugLogs.push(`[${new Date().toLocaleTimeString()}] Wrote ${value} to Heart Rate Control Point`);
+          } catch (e) {
+            console.warn(`Failed to write ${value} to Heart Rate Control Point:`, e);
+            debugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to write ${value} to Heart Rate Control Point: ${e}`);
           }
         }
       }
+
       debug.textContent = debugLogs.join('\n');
     }
 
     function handleHeartRateData(event) {
       const value = event.target.value;
+      const rawData = new Uint8Array(value.buffer);
+      console.log("Heart Rate raw data:", rawData);
+      debugLogs.push(`[${new Date().toLocaleTimeString()}] Heart Rate raw data: [${rawData}]`);
+
       const flags = value.getUint8(0);
       let hr;
 
@@ -224,7 +235,7 @@
       }
 
       console.log("Heart Rate:", hr);
-      debugLogs.push(`Heart Rate: ${hr}`);
+      debugLogs.push(`[${new Date().toLocaleTimeString()}] Heart Rate: ${hr}`);
 
       const hrDisplay = document.getElementById("heartRateDisplay");
       const avgDisplay = document.getElementById("averageHeartRate");
@@ -241,6 +252,12 @@
       const sum = heartRates.reduce((a, b) => a + b, 0);
       const avg = (sum / heartRates.length).toFixed(1);
       avgDisplay.textContent = `${avg} bpm`;
+
+      // Limit debug logs
+      if (debugLogs.length > 50) {
+        debugLogs.shift();
+      }
+      debug.textContent = debugLogs.join('\n');
     }
 
     function handleSpO2Data(event) {
@@ -251,8 +268,7 @@
 
       const rawData = new Uint8Array(value.buffer);
       console.log(`SpO2 raw data from ${uuid}:`, rawData);
-      debugLogs.push(`SpO2 raw data from ${uuid}: [${rawData}]`);
-      debug.textContent = debugLogs.join('\n');
+      debugLogs.push(`[${new Date().toLocaleTimeString()}] SpO2 raw data from ${uuid}: [${rawData}]`);
 
       let spo2;
       try {
@@ -261,32 +277,32 @@
           spo2 = value.getUint8(i);
           if (spo2 >= 60 && spo2 <= 100) {
             console.log(`Found potential SpO2 at byte ${i}: ${spo2}`);
-            debugLogs.push(`Found potential SpO2 at byte ${i}: ${spo2}`);
+            debugLogs.push(`[${new Date().toLocaleTimeString()}] Found potential SpO2 at byte ${i}: ${spo2}`);
             break;
           }
         }
-        // Try 16-bit value
+        // Try scaling byte 1
         if (!spo2 || spo2 < 60 || spo2 > 100) {
-          spo2 = value.getUint16(0, true);
-        }
-        // Try scaling (e.g., if raw value is offset)
-        if (!spo2 || spo2 < 60 || spo2 > 100) {
-          spo2 = value.getUint8(1) + 10; // Example: add offset to match 97-98
+          spo2 = value.getUint8(1) + 11; // Adjust to match 97-98
         }
       } catch (e) {
         console.warn("Error parsing SpO2 data:", e);
-        debugLogs.push(`Error parsing SpO2 data: ${e}`);
+        debugLogs.push(`[${new Date().toLocaleTimeString()}] Error parsing SpO2 data: ${e}`);
         spo2 = "N/A";
       }
 
       if (typeof spo2 === 'number' && spo2 >= 60 && spo2 <= 100) {
         console.log(`SpO2 from ${uuid}:`, spo2);
-        debugLogs.push(`SpO2 from ${uuid}: ${spo2}`);
+        debugLogs.push(`[${new Date().toLocaleTimeString()}] SpO2 from ${uuid}: ${spo2}`);
         spo2Div.textContent = `${spo2} %`;
       } else {
         console.warn(`Invalid SpO2 value from ${uuid}:`, spo2);
-        debugLogs.push(`Invalid SpO2 value from ${uuid}: ${spo2}`);
+        debugLogs.push(`[${new Date().toLocaleTimeString()}] Invalid SpO2 value from ${uuid}: ${spo2}`);
         spo2Div.textContent = `Unable to parse SpO2 (raw: [${rawData}])`;
+      }
+
+      if (debugLogs.length > 50) {
+        debugLogs.shift();
       }
       debug.textContent = debugLogs.join('\n');
     }
