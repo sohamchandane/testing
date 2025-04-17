@@ -4,13 +4,45 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Smartwatch BLE Scanner</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      margin: 10px 0;
+      width: 100%;
+      touch-action: manipulation;
+    }
+    .output, .debug {
+      background: #f0f0f0;
+      padding: 10px;
+      margin: 10px 0;
+      font-size: 14px;
+      overflow-x: auto;
+    }
+    #heartRateDisplay, #spo2Display {
+      margin: 10px 0;
+      padding: 10px;
+      background: #e0e0e0;
+    }
+    h3, h4 {
+      margin: 10px 0 5px;
+    }
+  </style>
 </head>
 <body>
   <h2>Smartwatch Bluetooth Scanner</h2>
   <button onclick="connectSmartwatch()">Scan & Connect</button>
+  <button onclick="triggerSpO2()">Trigger SpO2 Measurement</button>
 
   <div class="charUUID"></div>
   <div class="output"></div>
+  <div class="debug">Debug logs...</div>
 
   <h3>Heart Rate Readings:</h3>
   <div id="heartRateDisplay">Waiting for data...</div> 
@@ -25,18 +57,23 @@
     let heartRateChar = null;
     let spo2Char = null;
     let heartRates = [];
+    let debugLogs = [];
+    let potentialSpO2Characteristics = [];
 
     async function connectSmartwatch() {
       const output = document.querySelector('.output');
+      const debug = document.querySelector('.debug');
       const hrDiv = document.getElementById("heartRateDisplay");
       const avgHRDisplay = document.getElementById("averageHeartRate");
       const spo2Div = document.getElementById("spo2Display");
       console.log("Scanning for Bluetooth devices...");
+      debugLogs.push("Scanning for Bluetooth devices...");
+      debug.textContent = debugLogs.join('\n');
 
       try {
         // Request BLE device with specific services
         const device = await navigator.bluetooth.requestDevice({
-          filters: [{ namePrefix: 'WAVESTYLE' }], // Filter by device name
+          filters: [{ namePrefix: 'WAVESTYLE' }],
           optionalServices: [
             '0000180d-0000-1000-8000-00805f9b34fb', // Heart Rate Service
             '00006287-3c17-d293-8e48-14fe2e4da212', // Custom Service (possible SpO2)
@@ -47,63 +84,66 @@
         // Connect to GATT server
         const server = await device.gatt.connect();
         output.textContent = `Connected to ${device.name}`;
+        debugLogs.push(`Connected to ${device.name}`);
+        debug.textContent = debugLogs.join('\n');
 
         // Get all primary services
         const services = await server.getPrimaryServices();
 
         for (const service of services) {
           output.textContent += `\nService UUID: ${service.uuid}`;
+          debugLogs.push(`Service UUID: ${service.uuid}`);
           const characteristics = await service.getCharacteristics();
 
           for (const characteristic of characteristics) {
             console.log(`Characteristic UUID: ${characteristic.uuid}, Properties: `, characteristic.properties);
             output.textContent += `\n\tCharacteristic UUID: ${characteristic.uuid}`;
+            debugLogs.push(`Characteristic UUID: ${characteristic.uuid}, Properties: ${JSON.stringify(characteristic.properties)}`);
+            debug.textContent = debugLogs.join('\n');
 
-            // Heart Rate Measurement (Standard)
+            // Heart Rate Measurement
             if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb') {
               heartRateChar = characteristic;
               console.log("Heart Rate characteristic found!");
-
+              debugLogs.push("Heart Rate characteristic found!");
               await heartRateChar.startNotifications();
               heartRateChar.addEventListener('characteristicvaluechanged', handleHeartRateData);
             }
 
-            // SpO2 characteristic - check custom UUIDs
-            const possibleSpO2UUIDs = [
-              '00006387-3c17-d293-8e48-14fe2e4da212',
-              '00006487-3c17-d293-8e48-14fe2e4da212',
-              '0000ffd1-0000-1000-8000-00805f9b34fb',
-              '0000ffd2-0000-1000-8000-00805f9b34fb',
-              '0000ffd3-0000-1000-8000-00805f9b34fb',
-              '0000ffd4-0000-1000-8000-00805f9b34fb',
-              '0000ffd5-0000-1000-8000-00805f9b34fb',
-              '0000ffd8-0000-1000-8000-00805f9b34fb',
-              '0000ffe0-0000-1000-8000-00805f9b34fb',
-              '0000fff1-0000-1000-8000-00805f9b34fb',
-              '0000fff2-0000-1000-8000-00805f9b34fb',
-              '0000fff3-0000-1000-8000-00805f9b34fb'
-            ];
+            // Store potential SpO2 characteristics
+            if (service.uuid === '00006287-3c17-d293-8e48-14fe2e4da212' || service.uuid === '0000d0ff-3c17-d293-8e48-14fe2e4da212') {
+              potentialSpO2Characteristics.push(characteristic);
+              console.log(`Added potential SpO2 characteristic: ${characteristic.uuid}`);
 
-            if (possibleSpO2UUIDs.includes(characteristic.uuid)) {
-              console.log(`Testing possible SpO2 characteristic: ${characteristic.uuid}`);
+              // Try notifications
               if (characteristic.properties.notify) {
                 spo2Char = characteristic;
                 console.log("SpO2 characteristic with notify found:", characteristic.uuid);
-                await spo2Char.startNotifications();
-                spo2Char.addEventListener('characteristicvaluechanged', handleSpO2Data);
+                debugLogs.push(`SpO2 characteristic with notify found: ${characteristic.uuid}`);
+                await characteristic.startNotifications();
+                characteristic.addEventListener('characteristicvaluechanged', handleSpO2Data);
               }
+
+              // Try reading
               if (characteristic.properties.read) {
                 console.log(`Reading SpO2 characteristic: ${characteristic.uuid}`);
-                const value = await characteristic.readValue();
-                handleSpO2Data({ target: { value, uuid: characteristic.uuid } });
-              }
-              // Try writing to trigger SpO2 (common for some devices)
-              if (characteristic.properties.write) {
-                console.log(`Writing to characteristic: ${characteristic.uuid}`);
+                debugLogs.push(`Reading SpO2 characteristic: ${characteristic.uuid}`);
                 try {
-                  await characteristic.writeValue(new Uint8Array([0x01])); // Example trigger
+                  const value = await characteristic.readValue();
+                  handleSpO2Data({ target: { value, uuid: characteristic.uuid } });
+                  // Poll every 5 seconds
+                  setInterval(async () => {
+                    try {
+                      const value = await characteristic.readValue();
+                      handleSpO2Data({ target: { value, uuid: characteristic.uuid } });
+                    } catch (e) {
+                      console.warn(`Failed to poll ${characteristic.uuid}:`, e);
+                      debugLogs.push(`Failed to poll ${characteristic.uuid}: ${e}`);
+                    }
+                  }, 5000);
                 } catch (e) {
-                  console.warn(`Failed to write to ${characteristic.uuid}:`, e);
+                  console.warn(`Failed to read ${characteristic.uuid}:`, e);
+                  debugLogs.push(`Failed to read ${characteristic.uuid}: ${e}`);
                 }
               }
             }
@@ -112,21 +152,57 @@
 
         if (!spo2Char) {
           console.warn("No SpO2 characteristic with notifications found.");
-          output.textContent += `\nNo SpO2 characteristic with notifications found. Check console for raw data.`;
+          debugLogs.push("No SpO2 characteristic with notifications found.");
+          output.textContent += `\nNo SpO2 characteristic with notifications found. Check debug logs.`;
         }
 
         // Handle disconnections
         device.addEventListener('gattserverdisconnected', () => {
           output.textContent = 'Device disconnected. Please reconnect.';
+          debugLogs.push('Device disconnected.');
           spo2Div.textContent = 'Disconnected';
           hrDiv.textContent = 'Disconnected';
           avgHRDisplay.textContent = '0 bpm';
+          debug.textContent = debugLogs.join('\n');
         });
 
       } catch (error) {
         console.error("Error connecting to device:", error);
+        debugLogs.push(`Error connecting to device: ${error}`);
         output.textContent = `Error connecting to device: ${error}`;
+        debug.textContent = debugLogs.join('\n');
       }
+    }
+
+    async function triggerSpO2() {
+      const debug = document.querySelector('.debug');
+      console.log("Triggering SpO2 measurement...");
+      debugLogs.push("Triggering SpO2 measurement...");
+      debug.textContent = debugLogs.join('\n');
+
+      const writeValues = [
+        new Uint8Array([0x01]),
+        new Uint8Array([0x00]),
+        new Uint8Array([0x02]),
+        new Uint8Array([0xAA, 0x01]),
+        new Uint8Array([0x55, 0x01])
+      ];
+
+      for (const characteristic of potentialSpO2Characteristics) {
+        if (characteristic.properties.write) {
+          for (const value of writeValues) {
+            try {
+              await characteristic.writeValue(value);
+              console.log(`Wrote ${value} to ${characteristic.uuid}`);
+              debugLogs.push(`Wrote ${value} to ${characteristic.uuid}`);
+            } catch (e) {
+              console.warn(`Failed to write ${value} to ${characteristic.uuid}:`, e);
+              debugLogs.push(`Failed to write ${value} to ${characteristic.uuid}: ${e}`);
+            }
+          }
+        }
+      }
+      debug.textContent = debugLogs.join('\n');
     }
 
     function handleHeartRateData(event) {
@@ -134,7 +210,6 @@
       const flags = value.getUint8(0);
       let hr;
 
-      // Parse heart rate based on flags
       if ((flags & 0x01) === 0) {
         hr = value.getUint8(1); // 8-bit
       } else {
@@ -142,21 +217,19 @@
       }
 
       console.log("Heart Rate:", hr);
+      debugLogs.push(`Heart Rate: ${hr}`);
 
       const hrDisplay = document.getElementById("heartRateDisplay");
       const avgDisplay = document.getElementById("averageHeartRate");
 
-      // Append new reading
       const line = document.createElement("p");
       line.textContent = `${hr} bpm`;
       hrDisplay.appendChild(line);
 
-      // Limit to 10 readings to prevent clutter
       if (hrDisplay.childElementCount > 10) {
         hrDisplay.removeChild(hrDisplay.firstChild);
       }
 
-      // Calculate and update average
       heartRates.push(hr);
       const sum = heartRates.reduce((a, b) => a + b, 0);
       const avg = (sum / heartRates.length).toFixed(1);
@@ -167,37 +240,46 @@
       const value = event.target.value;
       const uuid = event.target.uuid || 'unknown';
       const spo2Div = document.getElementById("spo2Display");
+      const debug = document.querySelector('.debug');
 
-      // Log raw data for debugging
       const rawData = new Uint8Array(value.buffer);
       console.log(`SpO2 raw data from ${uuid}:`, rawData);
+      debugLogs.push(`SpO2 raw data from ${uuid}: [${rawData}]`);
+      debug.textContent = debugLogs.join('\n');
 
-      // Try different parsing approaches
       let spo2;
       try {
-        // Try single byte at position 0
-        spo2 = value.getUint8(0);
-        if (spo2 < 70 || spo2 > 100) {
-          // Try single byte at position 1
-          spo2 = value.getUint8(1);
+        // Try single byte at various positions
+        for (let i = 0; i < rawData.length; i++) {
+          spo2 = value.getUint8(i);
+          if (spo2 >= 60 && spo2 <= 100) {
+            break; // Valid SpO2 found
+          }
         }
-        if (spo2 < 70 || spo2 > 100) {
-          // Try 16-bit value
+        // Try 16-bit value
+        if (spo2 < 60 || spo2 > 100) {
           spo2 = value.getUint16(0, true);
+        }
+        // Try floating-point
+        if (spo2 < 60 || spo2 > 100) {
+          spo2 = value.getFloat32(0, true);
         }
       } catch (e) {
         console.warn("Error parsing SpO2 data:", e);
+        debugLogs.push(`Error parsing SpO2 data: ${e}`);
         spo2 = "N/A";
       }
 
-      // Validate and display SpO2
-      if (typeof spo2 === 'number' && spo2 >= 70 && spo2 <= 100) {
+      if (typeof spo2 === 'number' && spo2 >= 60 && spo2 <= 100) {
         console.log(`SpO2 from ${uuid}:`, spo2);
+        debugLogs.push(`SpO2 from ${uuid}: ${spo2}`);
         spo2Div.textContent = `${spo2} %`;
       } else {
         console.warn(`Invalid SpO2 value from ${uuid}:`, spo2);
-        spo2Div.textContent = `Unable to parse SpO2 (raw: ${rawData})`;
+        debugLogs.push(`Invalid SpO2 value from ${uuid}: ${spo2}`);
+        spo2Div.textContent = `Unable to parse SpO2 (raw: [${rawData}])`;
       }
+      debug.textContent = debugLogs.join('\n');
     }
   </script>
 </body>
