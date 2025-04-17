@@ -46,8 +46,6 @@
 <body>
   <h2>Smartwatch Bluetooth Scanner</h2>
   <button onclick="connectSmartwatch()">Scan & Connect</button>
-  <button onclick="triggerHeartRate()">Trigger Heart Rate</button>
-  <button onclick="triggerSpO2()">Trigger SpO2</button>
 
   <div class="charUUID"></div>
   <div class="output"></div>
@@ -71,7 +69,6 @@
 
   <script>
     let heartRateChar = null;
-    let heartRateControlChar = null;
     let potentialSpO2Characteristics = [];
     let heartRates = [];
     let hrDebugLogs = [];
@@ -143,22 +140,6 @@
                 console.error("Failed to start heart rate notifications:", e);
                 hrDebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to start heart rate notifications: ${e}`);
               }
-              if (props.read) {
-                setInterval(async () => {
-                  try {
-                    const value = await characteristic.readValue();
-                    handleHeartRateData({ target: { value } });
-                  } catch (e) {
-                    hrDebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to read heart rate: ${e}`);
-                  }
-                }, 1000);
-              }
-            }
-
-            if (characteristic.uuid === '00002a39-0000-1000-8000-00805f9b34fb') {
-              heartRateControlChar = characteristic;
-              console.log("Heart Rate Control Point found!");
-              hrDebugLogs.push(`[${new Date().toLocaleTimeString()}] Heart Rate Control Point found!`);
             }
 
             if (service.uuid === '00006287-3c17-d293-8e48-14fe2e4da212' || service.uuid === '0000d0ff-3c17-d293-8e48-14fe2e4da212') {
@@ -175,29 +156,9 @@
                   spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to start SpO2 notifications for ${characteristic.uuid}: ${e}`);
                 }
               }
-
-              if (props.read) {
-                try {
-                  const value = await characteristic.readValue();
-                  handleSpO2Data({ target: { value, uuid: characteristic.uuid } });
-                  setInterval(async () => {
-                    try {
-                      const value = await characteristic.readValue();
-                      handleSpO2Data({ target: { value, uuid: characteristic.uuid } });
-                    } catch (e) {
-                      spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to poll ${characteristic.uuid}: ${e}`);
-                    }
-                  }, characteristic.uuid === '0000ffd2-0000-1000-8000-00805f9b34fb' || characteristic.uuid === '00006487-3c17-d293-8e48-14fe2e4da212' ? 1500 : 3000);
-                } catch (e) {
-                  spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to read ${characteristic.uuid}: ${e}`);
-                }
-              }
             }
           }
         }
-
-        await triggerHeartRate();
-        await triggerSpO2();
 
         hrDebug.textContent = hrDebugLogs.join('\n');
         spo2Debug.textContent = spo2DebugLogs.join('\n');
@@ -221,91 +182,6 @@
         hrDebug.textContent = hrDebugLogs.join('\n');
         spo2Debug.textContent = spo2DebugLogs.join('\n');
       }
-    }
-
-    async function triggerHeartRate() {
-      const hrDebug = document.querySelector('.debug.heart-rate');
-      console.log("Triggering heart rate measurement...");
-      hrDebugLogs.push(`[${new Date().toLocaleTimeString()}] Triggering heart rate measurement...`);
-
-      if (heartRateChar) {
-        for (let i = 0; i < 3; i++) {
-          try {
-            await heartRateChar.startNotifications();
-            hrDebugLogs.push(`[${new Date().toLocaleTimeString()}] Heart rate notifications re-enabled (attempt ${i+1})`);
-            await new Promise(resolve => setTimeout(resolve, 1000));
-          } catch (e) {
-            hrDebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to re-enable heart rate notifications (attempt ${i+1}): ${e}`);
-          }
-        }
-      }
-
-      if (heartRateControlChar) {
-        const writeValues = [
-          new Uint8Array([0x01]),
-          new Uint8Array([0x00]),
-          new Uint8Array([0x02]),
-          new Uint8Array([0x03]),
-          new Uint8Array([0x04]),
-          new Uint8Array([0xFF])
-        ];
-        for (const value of writeValues) {
-          try {
-            await heartRateControlChar.writeValue(value);
-            hrDebugLogs.push(`[${new Date().toLocaleTimeString()}] Wrote ${value} to Heart Rate Control Point`);
-          } catch (e) {
-            hrDebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to write ${value} to Heart Rate Control Point: ${e}`);
-          }
-        }
-      }
-
-      if (hrDebugLogs.length > 50) {
-        hrDebugLogs.shift();
-      }
-      hrDebug.textContent = hrDebugLogs.join('\n');
-    }
-
-    async function triggerSpO2() {
-      const spo2Debug = document.querySelector('.debug.spo2');
-      console.log("Triggering SpO2 measurement...");
-      spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Triggering SpO2 measurement...`);
-
-      const writeValues = [
-        new Uint8Array([0x01]),
-        new Uint8Array([0x00]),
-        new Uint8Array([0x02]),
-        new Uint8Array([0xAA, 0x01]),
-        new Uint8Array([0x55, 0x01]),
-        new Uint8Array([0xFF]),
-        new Uint8Array([0x07]),
-        new Uint8Array([0x08]),
-        new Uint8Array([0xF0, 0x01]),
-        new Uint8Array([0xF0, 0x02]),
-        new Uint8Array([0xF0, 0x03])
-      ];
-
-      for (const characteristic of potentialSpO2Characteristics) {
-        const props = {
-          read: !!characteristic.properties.read,
-          write: !!characteristic.properties.write,
-          notify: !!characteristic.properties.notify
-        };
-        if (props.write) {
-          for (const value of writeValues) {
-            try {
-              await characteristic.writeValue(value);
-              spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Wrote ${value} to ${characteristic.uuid}`);
-            } catch (e) {
-              spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to write ${value} to ${characteristic.uuid}: ${e}`);
-            }
-          }
-        }
-      }
-
-      if (spo2DebugLogs.length > 50) {
-        spo2DebugLogs.shift();
-      }
-      spo2Debug.textContent = spo2DebugLogs.join('\n');
     }
 
     function handleHeartRateData(event) {
@@ -344,6 +220,9 @@
         }
 
         heartRates.push(hr);
+        if (heartRates.length > 100) {
+          heartRates.shift();
+        }
         const sum = heartRates.reduce((a, b) => a + b, 0);
         const avg = (sum / heartRates.length).toFixed(1);
         avgDisplay.textContent = `${avg} bpm`;
@@ -373,11 +252,25 @@
 
       let spo2;
       try {
-        if (uuid === '0000ffd2-0000-1000-8000-00805f9b34fb' && value.getUint8(1) === 86) {
+        // Prioritize 00006487-... for SpO2
+        if (uuid === '00006487-3c17-d293-8e48-14fe2e4da212') {
+          for (let i = 0; i < rawData.length; i++) {
+            spo2 = value.getUint8(i);
+            if (spo2 >= 60 && spo2 <= 100) {
+              console.log(`Found potential SpO2 at byte ${i}: ${spo2}`);
+              spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Found potential SpO2 at byte ${i}: ${spo2}`);
+              break;
+            }
+          }
+        }
+        // Fallback to 0000ffd2-... with scaling
+        if (!spo2 && uuid === '0000ffd2-0000-1000-8000-00805f9b34fb' && value.getUint8(1) === 86) {
           spo2 = value.getUint8(1) + 13; // 86 -> 99
           console.log(`Scaled SpO2 from ${uuid}:`, spo2);
           spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Scaled SpO2 from ${uuid}: ${spo2}`);
-        } else {
+        }
+        // Try other characteristics
+        if (!spo2) {
           for (let i = 0; i < rawData.length; i++) {
             spo2 = value.getUint8(i);
             if (spo2 >= 60 && spo2 <= 100) {
@@ -406,7 +299,7 @@
       } else {
         console.warn(`Invalid SpO2 value from ${uuid}:`, spo2);
         spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Invalid SpO2 value from ${uuid}: ${spo2}`);
-        spo2Div.textContent = `Unable to parse SpO2 (raw: [${rawData}])`;
+        spo2Div.textContent = `Waiting for valid SpO2 (raw: [${rawData}])`;
       }
 
       if (spo2DebugLogs.length > 50) {
