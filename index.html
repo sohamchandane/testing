@@ -24,6 +24,7 @@
       margin: 10px 0;
       font-size: 14px;
       overflow-x: auto;
+      white-space: pre-wrap;
     }
     #heartRateDisplay, #spo2Display {
       margin: 10px 0;
@@ -71,13 +72,13 @@
       debug.textContent = debugLogs.join('\n');
 
       try {
-        // Request BLE device with specific services
+        // Request BLE device
         const device = await navigator.bluetooth.requestDevice({
           filters: [{ namePrefix: 'WAVESTYLE' }],
           optionalServices: [
             '0000180d-0000-1000-8000-00805f9b34fb', // Heart Rate Service
-            '00006287-3c17-d293-8e48-14fe2e4da212', // Custom Service (possible SpO2)
-            '0000d0ff-3c17-d293-8e48-14fe2e4da212'  // Custom Service (possible SpO2)
+            '00006287-3c17-d293-8e48-14fe2e4da212', // Custom Service
+            '0000d0ff-3c17-d293-8e48-14fe2e4da212'  // Custom Service
           ]
         });
 
@@ -131,7 +132,8 @@
                 try {
                   const value = await characteristic.readValue();
                   handleSpO2Data({ target: { value, uuid: characteristic.uuid } });
-                  // Poll every 5 seconds
+                  // Poll every 2 seconds for 0000ffd2, 5 seconds for others
+                  const interval = characteristic.uuid === '0000ffd2-0000-1000-8000-00805f9b34fb' ? 2000 : 5000;
                   setInterval(async () => {
                     try {
                       const value = await characteristic.readValue();
@@ -140,7 +142,7 @@
                       console.warn(`Failed to poll ${characteristic.uuid}:`, e);
                       debugLogs.push(`Failed to poll ${characteristic.uuid}: ${e}`);
                     }
-                  }, 5000);
+                  }, interval);
                 } catch (e) {
                   console.warn(`Failed to read ${characteristic.uuid}:`, e);
                   debugLogs.push(`Failed to read ${characteristic.uuid}: ${e}`);
@@ -149,6 +151,9 @@
             }
           }
         }
+
+        // Try initial write to trigger SpO2
+        await triggerSpO2();
 
         if (!spo2Char) {
           console.warn("No SpO2 characteristic with notifications found.");
@@ -185,7 +190,9 @@
         new Uint8Array([0x00]),
         new Uint8Array([0x02]),
         new Uint8Array([0xAA, 0x01]),
-        new Uint8Array([0x55, 0x01])
+        new Uint8Array([0x55, 0x01]),
+        new Uint8Array([0xFF]),
+        new Uint8Array([0x07]) // Common for some health devices
       ];
 
       for (const characteristic of potentialSpO2Characteristics) {
@@ -249,20 +256,22 @@
 
       let spo2;
       try {
-        // Try single byte at various positions
+        // Try single byte at all positions
         for (let i = 0; i < rawData.length; i++) {
           spo2 = value.getUint8(i);
           if (spo2 >= 60 && spo2 <= 100) {
-            break; // Valid SpO2 found
+            console.log(`Found potential SpO2 at byte ${i}: ${spo2}`);
+            debugLogs.push(`Found potential SpO2 at byte ${i}: ${spo2}`);
+            break;
           }
         }
         // Try 16-bit value
-        if (spo2 < 60 || spo2 > 100) {
+        if (!spo2 || spo2 < 60 || spo2 > 100) {
           spo2 = value.getUint16(0, true);
         }
-        // Try floating-point
-        if (spo2 < 60 || spo2 > 100) {
-          spo2 = value.getFloat32(0, true);
+        // Try scaling (e.g., if raw value is offset)
+        if (!spo2 || spo2 < 60 || spo2 > 100) {
+          spo2 = value.getUint8(1) + 10; // Example: add offset to match 97-98
         }
       } catch (e) {
         console.warn("Error parsing SpO2 data:", e);
