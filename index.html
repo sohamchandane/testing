@@ -65,7 +65,7 @@
   <p id="averageHeartRate">0 bpm</p>
 
   <h3>SpO2:</h3>
-  <p id="spo2Display">Waiting for SpO2 notifications...</p> 
+  <p id="spo2Display">Waiting for SpO2 data...</p> 
 
   <script>
     let heartRateChar = null;
@@ -149,12 +149,43 @@
               spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Added potential SpO2 characteristic: ${characteristic.uuid}`);
 
               if (props.notify) {
-                try {
-                  await characteristic.startNotifications();
-                  characteristic.addEventListener('characteristicvaluechanged', handleSpO2Data);
-                  spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] SpO2 notifications enabled for ${characteristic.uuid}`);
-                } catch (e) {
-                  spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to start SpO2 notifications for ${characteristic.uuid}: ${e}`);
+                for (let i = 0; i < 3; i++) {
+                  try {
+                    await characteristic.startNotifications();
+                    characteristic.addEventListener('characteristicvaluechanged', handleSpO2Data);
+                    spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] SpO2 notifications enabled for ${characteristic.uuid} (attempt ${i+1})`);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                  } catch (e) {
+                    spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to start SpO2 notifications for ${characteristic.uuid} (attempt ${i+1}): ${e}`);
+                  }
+                }
+              }
+
+              if (props.read) {
+                setInterval(async () => {
+                  try {
+                    const value = await characteristic.readValue();
+                    handleSpO2Data({ target: { value, uuid: characteristic.uuid } });
+                    spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Read SpO2 from ${characteristic.uuid}`);
+                  } catch (e) {
+                    spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to read SpO2 from ${characteristic.uuid}: ${e}`);
+                  }
+                }, 2000);
+              }
+
+              if (characteristic.uuid === '0000fff2-0000-1000-8000-00805f9b34fb' && props.write) {
+                const enableCommands = [
+                  new Uint8Array([0x01]),
+                  new Uint8Array([0x02]),
+                  new Uint8Array([0xFF])
+                ];
+                for (const cmd of enableCommands) {
+                  try {
+                    await characteristic.writeValue(cmd);
+                    spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Wrote ${cmd} to ${characteristic.uuid} to enable notifications`);
+                  } catch (e) {
+                    spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to write ${cmd} to ${characteristic.uuid}: ${e}`);
+                  }
                 }
               }
             }
@@ -245,9 +276,10 @@
       const spo2Debug = document.querySelector('.debug.spo2');
 
       const rawData = new Uint8Array(value.buffer);
+      const source = event.type === 'characteristicvaluechanged' ? 'notification' : 'read';
       lastTriggeredUUID = uuid;
-      console.log(`SpO2 notification triggered from ${uuid}:`, rawData);
-      spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] SpO2 notification triggered from ${uuid}: [${rawData}]`);
+      console.log(`SpO2 ${source} from ${uuid}:`, rawData);
+      spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] SpO2 ${source} triggered from ${uuid}: [${rawData}]`);
 
       if (!lastSpo2RawData[uuid] || rawData.join(',') !== lastSpo2RawData[uuid].join(',')) {
         console.log(`SpO2 raw data from ${uuid}:`, rawData);
@@ -257,7 +289,6 @@
 
       let spo2;
       try {
-        // Try all bytes for valid SpO2 (60–100%)
         for (let i = 0; i < rawData.length; i++) {
           spo2 = value.getUint8(i);
           if (spo2 >= 60 && spo2 <= 100) {
@@ -266,15 +297,13 @@
             break;
           }
         }
-        // Fallback for 0000ffd2-... with scaling
         if (!spo2 && uuid === '0000ffd2-0000-1000-8000-00805f9b34fb' && value.getUint8(1) === 86) {
           spo2 = value.getUint8(1) + 13; // 86 -> 99
           console.log(`Scaled SpO2 from ${uuid}:`, spo2);
           spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Scaled SpO2 from ${uuid}: ${spo2}`);
         }
-        // Try other bytes or 16-bit
         if (!spo2 || spo2 < 60 || spo2 > 100) {
-          spo2 = value.getUint8(4); // Try byte 4 (85)
+          spo2 = value.getUint8(4); // Try byte 4
           if (spo2 >= 60 && spo2 <= 100) {
             spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Found potential SpO2 at byte 4: ${spo2}`);
           }
@@ -294,11 +323,11 @@
       if (typeof spo2 === 'number' && spo2 >= 60 && spo2 <= 100) {
         console.log(`SpO2 from ${uuid}:`, spo2);
         spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] SpO2 from ${uuid}: ${spo2}`);
-        spo2Div.textContent = `SpO2: ${spo2}% (UUID: ${uuid}, Raw: [${rawData}])`;
+        spo2Div.textContent = `SpO2: ${spo2}% (UUID: ${uuid}, Raw: [${rawData}], Source: ${source})`;
       } else {
         console.warn(`Invalid SpO2 value from ${uuid}:`, spo2);
         spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Invalid SpO2 value from ${uuid}: ${spo2}`);
-        spo2Div.textContent = `No valid SpO2 from ${uuid} (Raw: [${rawData}])`;
+        spo2Div.textContent = `No valid SpO2 from ${uuid} (Raw: [${rawData}], Source: ${source})`;
       }
 
       if (spo2DebugLogs.length > 50) {
