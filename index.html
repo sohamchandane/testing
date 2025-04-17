@@ -36,7 +36,7 @@
       try {
         // Request BLE device with specific services
         const device = await navigator.bluetooth.requestDevice({
-          acceptAllDevices: true, // Filter by device name
+          filters: [{ namePrefix: 'WAVESTYLE' }], // Filter by device name
           optionalServices: [
             '0000180d-0000-1000-8000-00805f9b34fb', // Heart Rate Service
             '00006287-3c17-d293-8e48-14fe2e4da212', // Custom Service (possible SpO2)
@@ -56,7 +56,7 @@
           const characteristics = await service.getCharacteristics();
 
           for (const characteristic of characteristics) {
-            console.log(`Characteristic UUID: ${characteristic.uuid}`);
+            console.log(`Characteristic UUID: ${characteristic.uuid}, Properties: `, characteristic.properties);
             output.textContent += `\n\tCharacteristic UUID: ${characteristic.uuid}`;
 
             // Heart Rate Measurement (Standard)
@@ -84,30 +84,44 @@
               '0000fff3-0000-1000-8000-00805f9b34fb'
             ];
 
-            if (possibleSpO2UUIDs.includes(characteristic.uuid) && characteristic.properties.notify) {
-              spo2Char = characteristic;
-              console.log("Possible SpO2 characteristic found:", characteristic.uuid);
-
-              await spo2Char.startNotifications();
-              spo2Char.addEventListener('characteristicvaluechanged', handleSpO2Data);
-            }
-          }
-        }
-
-        // If no SpO2 characteristic was found, try reading non-notifiable characteristics
-        if (!spo2Char) {
-          console.log("No notifiable SpO2 characteristic found, trying readable characteristics...");
-          for (const service of services) {
-            const characteristics = await service.getCharacteristics();
-            for (const characteristic of characteristics) {
-              if (possibleSpO2UUIDs.includes(characteristic.uuid) && characteristic.properties.read) {
-                console.log("Reading possible SpO2 characteristic:", characteristic.uuid);
+            if (possibleSpO2UUIDs.includes(characteristic.uuid)) {
+              console.log(`Testing possible SpO2 characteristic: ${characteristic.uuid}`);
+              if (characteristic.properties.notify) {
+                spo2Char = characteristic;
+                console.log("SpO2 characteristic with notify found:", characteristic.uuid);
+                await spo2Char.startNotifications();
+                spo2Char.addEventListener('characteristicvaluechanged', handleSpO2Data);
+              }
+              if (characteristic.properties.read) {
+                console.log(`Reading SpO2 characteristic: ${characteristic.uuid}`);
                 const value = await characteristic.readValue();
-                handleSpO2Data({ target: { value } });
+                handleSpO2Data({ target: { value, uuid: characteristic.uuid } });
+              }
+              // Try writing to trigger SpO2 (common for some devices)
+              if (characteristic.properties.write) {
+                console.log(`Writing to characteristic: ${characteristic.uuid}`);
+                try {
+                  await characteristic.writeValue(new Uint8Array([0x01])); // Example trigger
+                } catch (e) {
+                  console.warn(`Failed to write to ${characteristic.uuid}:`, e);
+                }
               }
             }
           }
         }
+
+        if (!spo2Char) {
+          console.warn("No SpO2 characteristic with notifications found.");
+          output.textContent += `\nNo SpO2 characteristic with notifications found. Check console for raw data.`;
+        }
+
+        // Handle disconnections
+        device.addEventListener('gattserverdisconnected', () => {
+          output.textContent = 'Device disconnected. Please reconnect.';
+          spo2Div.textContent = 'Disconnected';
+          hrDiv.textContent = 'Disconnected';
+          avgHRDisplay.textContent = '0 bpm';
+        });
 
       } catch (error) {
         console.error("Error connecting to device:", error);
@@ -137,6 +151,11 @@
       line.textContent = `${hr} bpm`;
       hrDisplay.appendChild(line);
 
+      // Limit to 10 readings to prevent clutter
+      if (hrDisplay.childElementCount > 10) {
+        hrDisplay.removeChild(hrDisplay.firstChild);
+      }
+
       // Calculate and update average
       heartRates.push(hr);
       const sum = heartRates.reduce((a, b) => a + b, 0);
@@ -146,29 +165,39 @@
 
     function handleSpO2Data(event) {
       const value = event.target.value;
+      const uuid = event.target.uuid || 'unknown';
       const spo2Div = document.getElementById("spo2Display");
 
-      // Try different byte positions for SpO2 (proprietary format unknown)
+      // Log raw data for debugging
+      const rawData = new Uint8Array(value.buffer);
+      console.log(`SpO2 raw data from ${uuid}:`, rawData);
+
+      // Try different parsing approaches
       let spo2;
       try {
-        // Common case: SpO2 as a single byte (0 or 1)
+        // Try single byte at position 0
         spo2 = value.getUint8(0);
-        if (spo2 < 70 || spo2 > 100) { // Validate SpO2 range
-          spo2 = value.getUint8(1); // Try next byte
+        if (spo2 < 70 || spo2 > 100) {
+          // Try single byte at position 1
+          spo2 = value.getUint8(1);
+        }
+        if (spo2 < 70 || spo2 > 100) {
+          // Try 16-bit value
+          spo2 = value.getUint16(0, true);
         }
       } catch (e) {
         console.warn("Error parsing SpO2 data:", e);
         spo2 = "N/A";
       }
 
-      // Validate SpO2 value
-      // if (typeof spo2 === 'number' && spo2 >= 70 && spo2 <= 100) {
-      //   console.log("SpO2:", spo2);
-      //   spo2Div.textContent = `${spo2} %`;
-      // } else {
-      //   console.warn("Invalid SpO2 value:", spo2);
-      //   spo2Div.textContent = "Unable to parse SpO2";
-      // }
+      // Validate and display SpO2
+      if (typeof spo2 === 'number' && spo2 >= 70 && spo2 <= 100) {
+        console.log(`SpO2 from ${uuid}:`, spo2);
+        spo2Div.textContent = `${spo2} %`;
+      } else {
+        console.warn(`Invalid SpO2 value from ${uuid}:`, spo2);
+        spo2Div.textContent = `Unable to parse SpO2 (raw: ${rawData})`;
+      }
     }
   </script>
 </body>
