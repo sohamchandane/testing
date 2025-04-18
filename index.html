@@ -9,19 +9,19 @@
         .section { margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 12px; }
         .data-display { font-size: 24px; margin: 15px 0; padding: 10px; background: white; border-radius: 8px; }
         #debug-console { background: #1a1a1a; color: #00ff00; padding: 10px; font-family: monospace; border-radius: 8px; }
-        button { padding: 12px 20px; background: #007bff; color: white; border: none; border-radius: 8px; width: 100%; }
+        button { padding: 12px 20px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 8px; }
     </style>
 </head>
 <body>
     <div class="section">
         <button id="connectBtn">Connect Device</button>
+        <button id="spo2Btn" disabled>Take SpO2 Reading</button>
     </div>
 
     <div class="section">
         <div class="data-display">
             ❤️ Heart Rate: <span id="heartRate">--</span> bpm<br>
-            📊 Last Readings: <span id="hrReadings">--</span><br>
-            📈 Average: <span id="avgHeartRate">--</span>
+            📊 Average: <span id="avgHeartRate">--</span>
         </div>
         <div class="data-display">
             🩸 SpO2: <span id="spo2">--</span>%
@@ -36,8 +36,7 @@
     <script>
         const debugConsole = document.getElementById('debug-console');
         let heartRateReadings = [];
-        const MAX_DISPLAY_READINGS = 10;
-        const SPO2_CHARACTERISTIC = '00006487-3c17-d293-8e48-14fe2e4da212';
+        let spo2Characteristic = null;
 
         function debugLog(message, isError = false) {
             const entry = document.createElement('div');
@@ -52,8 +51,8 @@
                 const device = await navigator.bluetooth.requestDevice({
                     filters: [{ name: 'WAVESTYLE_55A0' }],
                     optionalServices: [
-                        '0000180d-0000-1000-8000-00805f9b34fb', // HR
-                        '00006287-3c17-d293-8e48-14fe2e4da212'  // SpO2 Service
+                        '0000180d-0000-1000-8000-00805f9b34fb',
+                        '00006287-3c17-d293-8e48-14fe2e4da212'
                     ]
                 });
 
@@ -62,29 +61,47 @@
                 debugLog('GATT connected');
 
                 // Heart Rate Setup
-                try {
-                    const hrService = await server.getPrimaryService('0000180d-0000-1000-8000-00805f9b34fb');
-                    const hrChar = await hrService.getCharacteristic('00002a37-0000-1000-8000-00805f9b34fb');
-                    await hrChar.startNotifications();
-                    hrChar.addEventListener('characteristicvaluechanged', processHR);
-                    debugLog('HR notifications enabled');
-                } catch (hrError) {
-                    debugLog(`HR setup failed: ${hrError}`, true);
-                }
+                const hrService = await server.getPrimaryService('0000180d-0000-1000-8000-00805f9b34fb');
+                const hrChar = await hrService.getCharacteristic('00002a37-0000-1000-8000-00805f9b34fb');
+                await hrChar.startNotifications();
+                hrChar.addEventListener('characteristicvaluechanged', processHR);
+                debugLog('HR notifications enabled');
 
-                // SpO2 Setup for confirmed working characteristic
-                try {
-                    const spo2Service = await server.getPrimaryService('00006287-3c17-d293-8e48-14fe2e4da212');
-                    const spo2Char = await spo2Service.getCharacteristic(SPO2_CHARACTERISTIC);
-                    await spo2Char.startNotifications();
-                    spo2Char.addEventListener('characteristicvaluechanged', processSpO2);
-                    debugLog('SpO2 notifications enabled');
-                } catch (spo2Error) {
-                    debugLog(`SpO2 setup failed: ${spo2Error}`, true);
-                }
+                // SpO2 Setup
+                const spo2Service = await server.getPrimaryService('00006287-3c17-d293-8e48-14fe2e4da212');
+                spo2Characteristic = await spo2Service.getCharacteristic('00006487-3c17-d293-8e48-14fe2e4da212');
+                await spo2Characteristic.startNotifications();
+                spo2Characteristic.addEventListener('characteristicvaluechanged', processSpO2);
+                debugLog('SpO2 notifications enabled');
+                
+                document.getElementById('spo2Btn').disabled = false;
 
             } catch (error) {
                 debugLog(`Connection error: ${error}`, true);
+            }
+        });
+
+        document.getElementById('spo2Btn').addEventListener('click', async () => {
+            try {
+                debugLog('Triggering SpO2 measurement...');
+                // Try different write commands based on common protocols
+                const commands = [
+                    new Uint8Array([0x01, 0x00]),  // Enable notifications
+                    new Uint8Array([0x15, 0x00]),   // Start measurement
+                    new Uint8Array([0xAA, 0x02])    // Custom command
+                ];
+                
+                for (const cmd of commands) {
+                    try {
+                        await spo2Characteristic.writeValue(cmd);
+                        debugLog(`Sent command: ${Array.from(cmd)}`);
+                        break;
+                    } catch (writeError) {
+                        debugLog(`Command ${Array.from(cmd)} failed: ${writeError.message}`);
+                    }
+                }
+            } catch (error) {
+                debugLog(`SpO2 trigger error: ${error}`, true);
             }
         });
 
@@ -94,12 +111,11 @@
                 const flags = value.getUint8(0);
                 const rate = flags & 0x01 ? value.getUint16(1, true) : value.getUint8(1);
                 
+                heartRateReadings.push(rate);
+                heartRateReadings = heartRateReadings.slice(-30);
                 document.getElementById('heartRate').textContent = rate;
-                heartRateReadings = [...heartRateReadings.slice(-MAX_DISPLAY_READINGS), rate];
-                document.getElementById('hrReadings').textContent = heartRateReadings.join(', ');
-                
-                const avg = heartRateReadings.reduce((a, b) => a + b, 0) / heartRateReadings.length;
-                document.getElementById('avgHeartRate').textContent = avg.toFixed(2);
+                document.getElementById('avgHeartRate').textContent = 
+                    (heartRateReadings.reduce((a, b) => a + b, 0) / heartRateReadings.length).toFixed(1);
 
             } catch (error) {
                 debugLog(`HR processing error: ${error}`, true);
@@ -108,41 +124,28 @@
 
         function processSpO2(event) {
             try {
-                const value = new DataView(event.target.value.buffer);
-                const bytes = new Uint8Array(value.buffer);
-                debugLog(`SpO2 RAW DATA: [${bytes.join(', ')}]`);
+                const value = new Uint8Array(event.target.value.buffer);
+                debugLog(`SPO2 RAW DATA: [${Array.from(value)}]`);
 
-                // Extended parsing attempts for confirmed characteristic
-                let spo2 = null;
-                
-                // Attempt 1: Simple 1-byte value at position 1
-                if (bytes.length >= 2 && bytes[1] >= 70 && bytes[1] <= 100) {
-                    spo2 = bytes[1];
-                }
-                
-                // Attempt 2: 16-bit little-endian at position 1
-                if (!spo2 && bytes.length >= 3) {
-                    const rawValue = value.getUint16(1, true);
-                    if (rawValue >= 7000 && rawValue <= 10000) {
-                        spo2 = rawValue / 100;
+                // Try all possible byte positions and formats
+                for (let i = 0; i < value.length; i++) {
+                    const byteValue = value[i];
+                    const wordValue = (value[i+1] << 8) | value[i];
+                    
+                    if (byteValue >= 70 && byteValue <= 100) {
+                        document.getElementById('spo2').textContent = byteValue;
+                        debugLog(`Found SpO2 at byte ${i}: ${byteValue}%`);
+                        return;
+                    }
+                    
+                    if (wordValue >= 7000 && wordValue <= 10000) {
+                        document.getElementById('spo2').textContent = Math.round(wordValue/100);
+                        debugLog(`Found SpO2 at bytes ${i}-${i+1}: ${wordValue/100}%`);
+                        return;
                     }
                 }
-                
-                // Attempt 3: Multi-byte structure with flags
-                if (!spo2 && bytes.length >= 4) {
-                    const flags = bytes[0];
-                    if (flags & 0x01) { // Check if SpO2 present flag
-                        spo2 = bytes[2];
-                    }
-                }
-                
-                // Final validation
-                if (spo2 && spo2 >= 70 && spo2 <= 100) {
-                    document.getElementById('spo2').textContent = Math.round(spo2);
-                    debugLog(`Valid SpO2: ${Math.round(spo2)}%`);
-                } else {
-                    debugLog(`Unrecognized SpO2 format. Please share RAW DATA!`);
-                }
+
+                debugLog('No valid SpO2 found in raw data. PLEASE SHARE THIS DATA!');
 
             } catch (error) {
                 debugLog(`SpO2 processing error: ${error}`, true);
