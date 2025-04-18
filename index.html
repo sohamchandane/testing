@@ -37,6 +37,18 @@
         const debugConsole = document.getElementById('debug-console');
         let heartRateReadings = [];
         const MAX_DISPLAY_READINGS = 10;
+        const SPO2_CHARACTERISTICS = [
+            '0000ffd1-0000-1000-8000-00805f9b34fb',
+            '0000ffd2-0000-1000-8000-00805f9b34fb',
+            '0000ffd3-0000-1000-8000-00805f9b34fb',
+            '0000ffd4-0000-1000-8000-00805f9b34fb',
+            '0000ffd5-0000-1000-8000-00805f9b34fb',
+            '0000ffd8-0000-1000-8000-00805f9b34fb',
+            '0000ffe0-0000-1000-8000-00805f9b34fb',
+            '0000fff1-0000-1000-8000-00805f9b34fb',
+            '0000fff2-0000-1000-8000-00805f9b34fb',
+            '0000fff3-0000-1000-8000-00805f9b34fb'
+        ];
 
         function debugLog(message, isError = false) {
             const entry = document.createElement('div');
@@ -71,24 +83,32 @@
                     debugLog(`HR setup failed: ${hrError}`, true);
                 }
 
-                // Enhanced SpO2 Setup
+                // SpO2 Setup with all characteristics
                 try {
                     const spo2Service = await server.getPrimaryService('0000d0ff-3c17-d293-8e48-14fe2e4da212');
-                    const characteristics = [
-                        '0000fff1-0000-1000-8000-00805f9b34fb',
-                        '0000fff2-0000-1000-8000-00805f9b34fb',
-                        '0000ffd2-0000-1000-8000-00805f9b34fb'
-                    ];
-
-                    for (const charUUID of characteristics) {
+                    
+                    for (const charUUID of SPO2_CHARACTERISTICS) {
                         try {
+                            debugLog(`Attempting SpO2 characteristic: ${charUUID}`);
                             const spo2Char = await spo2Service.getCharacteristic(charUUID);
+                            
+                            // Try to enable notifications
                             await spo2Char.startNotifications();
+                            
+                            // Some devices need this initialization
+                            try {
+                                await spo2Char.writeValue(new Uint8Array([0x01, 0x00]));
+                                debugLog(`Wrote enable command to ${charUUID}`);
+                            } catch (writeError) {
+                                debugLog(`Write failed for ${charUUID}: ${writeError.message}`);
+                            }
+                            
                             spo2Char.addEventListener('characteristicvaluechanged', processSpO2);
-                            debugLog(`SpO2 notifications enabled for ${charUUID}`);
+                            debugLog(`Subscribed to SpO2 characteristic: ${charUUID}`);
                             break;
+                            
                         } catch (charError) {
-                            debugLog(`Skipped characteristic ${charUUID}: ${charError.message}`);
+                            debugLog(`Failed ${charUUID}: ${charError.message}`, true);
                         }
                     }
                 } catch (spo2Error) {
@@ -106,23 +126,13 @@
                 const flags = value.getUint8(0);
                 const rate = flags & 0x01 ? value.getUint16(1, true) : value.getUint8(1);
                 
-                // Update heart rate display
+                // Update displays
                 document.getElementById('heartRate').textContent = rate;
-                
-                // Store and display readings
-                heartRateReadings.push(rate);
-                if (heartRateReadings.length > MAX_DISPLAY_READINGS) {
-                    heartRateReadings.shift();
-                }
+                heartRateReadings = [...heartRateReadings.slice(-MAX_DISPLAY_READINGS), rate];
                 document.getElementById('hrReadings').textContent = heartRateReadings.join(', ');
                 
-                // Calculate average
-                const avg = heartRateReadings.length > 0 
-                    ? (heartRateReadings.reduce((a, b) => a + b, 0) / heartRateReadings.length).toFixed(2)
-                    : 0;
-                document.getElementById('avgHeartRate').textContent = avg;
-
-                debugLog(`HR Update: ${rate}bpm | Readings: [${heartRateReadings.join(', ')}] | Avg: ${avg}`);
+                const avg = heartRateReadings.reduce((a, b) => a + b, 0) / heartRateReadings.length;
+                document.getElementById('avgHeartRate').textContent = avg.toFixed(2);
 
             } catch (error) {
                 debugLog(`HR processing error: ${error}`, true);
@@ -132,24 +142,38 @@
         function processSpO2(event) {
             try {
                 const value = new DataView(event.target.value.buffer);
-                let spo2 = null;
-
-                // Multiple format attempts
-                if (value.byteLength >= 4) {
-                    spo2 = value.getUint16(2, true);
-                    if (spo2 >= 7000 && spo2 <= 10000) spo2 /= 100;
-                }
+                debugLog(`SpO2 RAW: ${Array.from(new Uint8Array(value.buffer)).join(',')}`);
                 
-                if (!spo2 && value.byteLength >= 2) {
-                    spo2 = value.getUint8(1);
+                let spo2Value = null;
+                const bytes = new Uint8Array(value.buffer);
+
+                // Try multiple parsing strategies
+                const attempts = [
+                    () => bytes[1],                         // Common 1-byte position
+                    () => bytes[2],                         // Alternative position
+                    () => value.getUint16(2, true) / 100,   // 16-bit scaled value
+                    () => (bytes[1] << 8) | bytes[2],       // Combined bytes
+                    () => bytes[3],                         // Later byte position
+                    () => value.getFloat32(0, true)         // Floating point format
+                ];
+
+                for (const attempt of attempts) {
+                    try {
+                        const result = attempt();
+                        if (result >= 70 && result <= 100) {
+                            spo2Value = Math.round(result);
+                            break;
+                        }
+                    } catch {}
                 }
 
-                if (spo2 && spo2 >= 70 && spo2 <= 100) {
-                    document.getElementById('spo2').textContent = Math.round(spo2);
-                    debugLog(`SpO2 Update: ${spo2}%`);
+                if (spo2Value) {
+                    document.getElementById('spo2').textContent = spo2Value;
+                    debugLog(`Valid SpO2: ${spo2Value}%`);
                 } else {
-                    debugLog(`Raw SpO2 Data: [${Array.from(new Uint8Array(value.buffer)).join(', ')}]`);
+                    debugLog(`Unrecognized SpO2 format: ${bytes.join(',')}`);
                 }
+
             } catch (error) {
                 debugLog(`SpO2 processing error: ${error}`, true);
             }
