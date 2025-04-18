@@ -42,14 +42,13 @@
         const MAX_DISPLAY_READINGS = 10;
         const SPO2_CHARACTERISTICS = [
             '00006487-3c17-d293-8e48-14fe2e4da212',
-            '0000ffd1-0000-1000-8000-00805f9b34fb',
             '0000ffd2-0000-1000-8000-00805f9b34fb',
             '0000fff2-0000-1000-8000-00805f9b34fb'
         ];
         let spo2Characteristics = [];
         let device, server;
         let spo2Interval = null;
-        let spo2Timeout = null;
+        let lastSpO2Value = null;
 
         function debugLog(message, isError = false) {
             const entry = document.createElement('div');
@@ -62,12 +61,13 @@
         }
 
         async function startSpO2() {
+            debugLog('SpO2 measurement started');
             document.getElementById('spo2').textContent = 'Starting...';
             let notificationSuccess = false;
 
             // Try enabling notifications
             for (const char of spo2Characteristics) {
-                if ((char.uuid === '00006487-3c17-d293-8e48-14fe2e4da212' || char.uuid === '0000ffd1-0000-1000-8000-00805f9b34fb') && char.properties.notify) {
+                if (char.uuid === '00006487-3c17-d293-8e48-14fe2e4da212' && char.properties.notify) {
                     for (let i = 0; i < 3; i++) {
                         try {
                             await char.startNotifications();
@@ -85,11 +85,13 @@
 
             // Send start command
             for (const char of spo2Characteristics) {
-                if (char.uuid === '0000fff2-0000-1000-8000-00805f9b34fb' && char.properties.write) {
+                if (char.properties.write) {
                     const commands = [
+                        new Uint8Array([0x01]),
+                        new Uint8Array([0xAA]),
                         new Uint8Array([0x01, 0x00]),
                         new Uint8Array([0xAA, 0x01]),
-                        new Uint8Array([0x01, 0x00, 0x00])
+                        new Uint8Array([0x01, 0x00, 0x00, 0x00])
                     ];
                     for (const command of commands) {
                         try {
@@ -103,28 +105,24 @@
                 }
             }
 
-            // Periodic reads as fallback
+            // Periodic reads
             spo2Interval = setInterval(async () => {
                 for (const char of spo2Characteristics) {
                     if (char.uuid === '0000ffd2-0000-1000-8000-00805f9b34fb' && char.properties.read) {
-                        try {
-                            const value = await char.readValue();
-                            debugLog(`Read SpO2 from ${char.uuid}: ${Array.from(new Uint8Array(value.buffer))}`);
-                            processSpO2({ target: { value, uuid: char.uuid }, type: 'read' });
-                        } catch (error) {
-                            debugLog(`Read failed for ${char.uuid}: ${error.message}`, true);
+                        for (let i = 0; i < 2; i++) {
+                            try {
+                                const value = await char.readValue();
+                                debugLog(`Read SpO2 from ${char.uuid}: ${Array.from(new Uint8Array(value.buffer))}`);
+                                processSpO2({ target: { value, uuid: char.uuid }, type: 'read' });
+                                break;
+                            } catch (error) {
+                                debugLog(`Read failed for ${char.uuid} (attempt ${i+1}): ${error.message}`, true);
+                            }
+                            await new Promise(resolve => setTimeout(resolve, 500));
                         }
                     }
                 }
-            }, 2000);
-
-            // Auto-stop after 30 seconds if no valid data
-            spo2Timeout = setTimeout(() => {
-                if (document.getElementById('spo2').textContent === 'Measuring...') {
-                    debugLog('No valid SpO2 data received, auto-stopping');
-                    stopSpO2();
-                }
-            }, 30000);
+            }, 1000);
 
             document.getElementById('spo2').textContent = 'Measuring...';
             document.getElementById('startSpO2Btn').disabled = true;
@@ -132,19 +130,16 @@
         }
 
         async function stopSpO2() {
-            document.getElementById('spo2').textContent = 'Stopping...';
+            debugLog('SpO2 measurement stopped');
+            document.getElementById('spo2').textContent = lastSpO2Value ? `${lastSpO2Value}%` : '--';
             if (spo2Interval) {
                 clearInterval(spo2Interval);
                 spo2Interval = null;
                 debugLog('Stopped periodic SpO2 reads');
             }
-            if (spo2Timeout) {
-                clearTimeout(spo2Timeout);
-                spo2Timeout = null;
-            }
 
             for (const char of spo2Characteristics) {
-                if ((char.uuid === '00006487-3c17-d293-8e48-14fe2e4da212' || char.uuid === '0000ffd1-0000-1000-8000-00805f9b34fb') && char.properties.notify) {
+                if (char.uuid === '00006487-3c17-d293-8e48-14fe2e4da212' && char.properties.notify) {
                     try {
                         char.removeEventListener('characteristicvaluechanged', processSpO2);
                         debugLog(`Unsubscribed from SpO2 notifications: ${char.uuid}`);
@@ -152,10 +147,11 @@
                         debugLog(`Unsubscribe failed for ${char.uuid}: ${error.message}`, true);
                     }
                 }
-                if (char.uuid === '0000fff2-0000-1000-8000-00805f9b34fb' && char.properties.write) {
+                if (char.properties.write) {
                     const commands = [
+                        new Uint8Array([0x00]),
                         new Uint8Array([0x00, 0x00]),
-                        new Uint8Array([0x00, 0x00, 0x00])
+                        new Uint8Array([0x00, 0x00, 0x00, 0x00])
                     ];
                     for (const command of commands) {
                         try {
@@ -169,7 +165,7 @@
                 }
             }
 
-            document.getElementById('spo2').textContent = '--';
+            lastSpO2Value = null;
             document.getElementById('startSpO2Btn').disabled = false;
             document.getElementById('stopSpO2Btn').disabled = true;
         }
@@ -235,10 +231,6 @@
                         clearInterval(spo2Interval);
                         spo2Interval = null;
                     }
-                    if (spo2Timeout) {
-                        clearTimeout(spo2Timeout);
-                        spo2Timeout = null;
-                    }
                 });
 
             } catch (error) {
@@ -277,13 +269,13 @@
                 
                 let spo2Value = null;
                 const attempts = [
+                    () => bytes[1] + 13,                    // Byte 1 + 13 (86 + 13 = 99)
                     () => bytes[0],                         // Byte 0
                     () => bytes[1],                         // Byte 1
                     () => bytes[2],                         // Byte 2
                     () => bytes[3],                         // Byte 3
                     () => bytes[4],                         // Byte 4
-                    () => bytes[1] + 13,                    // Byte 1 + 13 (prior success)
-                    () => bytes[0] + 81,                    // Byte 0 + 81 (test for 18 -> 99)
+                    () => bytes[0] - 104,                   // Byte 0 - 104 (203 - 104 = 99)
                     () => bytes[0] + bytes[1],              // Sum bytes
                     () => value.getUint16(0, true),         // 16-bit
                     () => value.getUint16(2, true) / 100,   // Scaled 16-bit
@@ -302,21 +294,17 @@
                 }
 
                 if (spo2Value) {
-                    document.getElementById('spo2').textContent = spo2Value;
+                    lastSpO2Value = spo2Value;
+                    document.getElementById('spo2').textContent = `${spo2Value}%`;
                     debugLog(`Valid SpO2: ${spo2Value}% (${source}, ${event.target.uuid})`);
-                    clearTimeout(spo2Timeout);
-                    spo2Timeout = setTimeout(() => {
-                        debugLog('No new SpO2 data, auto-stopping');
-                        stopSpO2();
-                    }, 10000);
                 } else {
                     debugLog(`Unrecognized SpO2 format: ${bytes.join(',')} (${source}, ${event.target.uuid})`);
-                    document.getElementById('spo2').textContent = 'Measuring...';
+                    document.getElementById('spo2').textContent = lastSpO2Value ? `${lastSpO2Value}%` : 'Measuring...';
                 }
 
             } catch (error) {
                 debugLog(`SpO2 processing error: ${error}`, true);
-                document.getElementById('spo2').textContent = 'Measuring...';
+                document.getElementById('spo2').textContent = lastSpO2Value ? `${lastSpO2Value}%` : 'Measuring...';
             }
         }
     </script>
