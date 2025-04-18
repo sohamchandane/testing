@@ -5,165 +5,138 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smartwatch Health Monitor</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-        .section { margin-bottom: 30px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
-        .data-display { font-size: 24px; margin: 10px 0; }
-        button { padding: 10px 15px; background-color: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        #debug-console { background: #111; color: #0f0; padding: 10px; font-family: monospace; max-height: 200px; overflow-y: auto; }
-        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background-color: #f2f2f2; }
-        .error { color: red; }
+        /* Mobile-optimized CSS */
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 15px; }
+        .section { margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        button { padding: 12px 20px; background: #007bff; color: white; border: none; border-radius: 8px; font-size: 16px; width: 100%; }
+        .data-display { font-size: 24px; margin: 15px 0; padding: 10px; background: white; border-radius: 8px; }
+        #debug-console { background: #1a1a1a; color: #00ff00; padding: 10px; font-family: 'Courier New', monospace; font-size: 12px; border-radius: 8px; }
     </style>
 </head>
 <body>
-    <h1>Smartwatch Health Monitor</h1>
-    
     <div class="section">
-        <h2>Device Connection</h2>
-        <button id="connectBtn">Connect to Smartwatch</button>
-        <div id="device-info"></div>
+        <h2>Smartwatch Monitor</h2>
+        <button id="connectBtn">Connect Device</button>
     </div>
-    
+
     <div class="section">
-        <h2>Health Data</h2>
-        <div class="data-display">❤️ Heart Rate: <span id="heartRate">--</span> bpm (Avg: <span id="avgHeartRate">--</span>)</div>
-        <div class="data-display">🩸 SpO2: <span id="spo2">--</span>%</div>
+        <div class="data-display">
+            ❤️ Heart Rate: <span id="heartRate">--</span> bpm<br>
+            📊 Average: <span id="avgHeartRate">--</span>
+        </div>
+        <div class="data-display">
+            🩸 SpO2: <span id="spo2">--</span>%
+        </div>
     </div>
-    
+
     <div class="section">
-        <h2>Debug Console</h2>
+        <h3>Debug Console</h3>
         <div id="debug-console"></div>
     </div>
 
     <script>
-        const debugConsole = document.getElementById('debug-console');
-        let heartRateReadings = [];
-        
-        // Debug logging
-        function log(message, isError = false) {
-            const line = `[${new Date().toLocaleTimeString()}] ${message}`;
-            debugConsole.innerHTML += (isError ? `<span class="error">${line}</span>` : line) + '\n';
-            debugConsole.scrollTop = debugConsole.scrollHeight;
+        // Service worker registration for PWA capabilities
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js')
+                .then(reg => debugLog('Service Worker registered'))
+                .catch(err => debugLog(`SW registration failed: ${err}`, true));
         }
 
-        // BLE Configuration
-        const BLE_CONFIG = {
-            deviceName: 'WAVESTYLE_55A0',
-            services: {
-                heartRate: '0000180d-0000-1000-8000-00805f9b34fb',
-                spo2: '0000d0ff-3c17-d293-8e48-14fe2e4da212'
-            },
-            characteristics: {
-                heartRateMeasurement: '00002a37-0000-1000-8000-00805f9b34fb',
-                spo2Candidates: [
-                    '0000fff1-0000-1000-8000-00805f9b34fb',
-                    '0000fff2-0000-1000-8000-00805f9b34fb',
-                    '0000ffd2-0000-1000-8000-00805f9b34fb'
-                ]
-            }
-        };
+        const debugConsole = document.getElementById('debug-console');
+        let heartRateReadings = [];
+        let bluetoothDevice = null;
+
+        function debugLog(message, isError = false) {
+            const logEntry = document.createElement('div');
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logEntry.style.color = isError ? '#ff4444' : '#00ff00';
+            debugConsole.prepend(logEntry);
+        }
 
         document.getElementById('connectBtn').addEventListener('click', async () => {
             try {
-                log('Initializing connection...');
-                const device = await navigator.bluetooth.requestDevice({
-                    filters: [{ name: BLE_CONFIG.deviceName }],
-                    optionalServices: Object.values(BLE_CONFIG.services)
+                debugLog('Initializing BLE connection...');
+                
+                bluetoothDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ name: 'WAVESTYLE_55A0' }],
+                    optionalServices: [
+                        '0000180d-0000-1000-8000-00805f9b34fb', // HR
+                        '0000d0ff-3c17-d293-8e48-14fe2e4da212'  // SpO2
+                    ]
                 });
 
-                log(`Connected to device: ${device.name}`);
-                device.addEventListener('gattserverdisconnected', () => log('Device disconnected'));
+                debugLog(`Connected to: ${bluetoothDevice.name}`);
+                
+                const server = await bluetoothDevice.gatt.connect();
+                debugLog('GATT connected');
 
-                const server = await device.gatt.connect();
-                log('GATT server connected');
-
-                // Setup heart rate monitoring
+                // Heart Rate Setup
                 try {
-                    const hrService = await server.getPrimaryService(BLE_CONFIG.services.heartRate);
-                    const hrChar = await hrService.getCharacteristic(BLE_CONFIG.characteristics.heartRateMeasurement);
+                    const hrService = await server.getPrimaryService('0000180d-0000-1000-8000-00805f9b34fb');
+                    const hrChar = await hrService.getCharacteristic('00002a37-0000-1000-8000-00805f9b34fb');
                     await hrChar.startNotifications();
-                    hrChar.addEventListener('characteristicvaluechanged', processHeartRate);
-                    log('Heart rate monitoring enabled');
+                    hrChar.addEventListener('characteristicvaluechanged', processHR);
+                    debugLog('HR notifications enabled');
                 } catch (hrError) {
-                    log(`Heart rate setup failed: ${hrError.message}`, true);
+                    debugLog(`HR setup failed: ${hrError}`, true);
                 }
 
-                // Setup SpO2 monitoring
+                // SpO2 Setup
                 try {
-                    const spo2Service = await server.getPrimaryService(BLE_CONFIG.services.spo2);
-                    
-                    for (const charUUID of BLE_CONFIG.characteristics.spo2Candidates) {
-                        try {
-                            const spo2Char = await spo2Service.getCharacteristic(charUUID);
-                            await spo2Char.startNotifications();
-                            spo2Char.addEventListener('characteristicvaluechanged', processSpO2);
-                            log(`Subscribed to SpO2 characteristic: ${charUUID}`);
-                            break;
-                        } catch (charError) {
-                            log(`Skipping characteristic ${charUUID}: ${charError.message}`);
-                        }
-                    }
+                    const spo2Service = await server.getPrimaryService('0000d0ff-3c17-d293-8e48-14fe2e4da212');
+                    const spo2Char = await spo2Service.getCharacteristic('0000fff1-0000-1000-8000-00805f9b34fb');
+                    await spo2Char.startNotifications();
+                    spo2Char.addEventListener('characteristicvaluechanged', processSpO2);
+                    debugLog('SpO2 notifications enabled');
                 } catch (spo2Error) {
-                    log(`SpO2 setup failed: ${spo2Error.message}`, true);
+                    debugLog(`SpO2 setup failed: ${spo2Error}`, true);
                 }
 
             } catch (error) {
-                log(`Connection failed: ${error.message}`, true);
+                debugLog(`Connection error: ${error}`, true);
             }
         });
 
-        function processHeartRate(event) {
+        function processHR(event) {
             try {
                 const value = event.target.value;
                 const flags = value.getUint8(0);
                 const rate = flags & 0x01 ? value.getUint16(1, true) : value.getUint8(1);
                 
                 document.getElementById('heartRate').textContent = rate;
-                heartRateReadings = [...heartRateReadings.slice(-99), rate];
+                heartRateReadings = heartRateReadings.slice(-29).concat(rate); // Keep last 30 readings
                 
                 const avg = heartRateReadings.reduce((a, b) => a + b, 0) / heartRateReadings.length;
                 document.getElementById('avgHeartRate').textContent = avg.toFixed(1);
                 
-                log(`Heart rate update: ${rate} bpm (Avg: ${avg.toFixed(1)})`);
+                debugLog(`HR: ${rate}bpm (Avg: ${avg.toFixed(1)})`);
 
             } catch (error) {
-                log(`Heart rate processing error: ${error.message}`, true);
+                debugLog(`HR processing error: ${error}`, true);
             }
         }
 
         function processSpO2(event) {
             try {
                 const value = new DataView(event.target.value.buffer);
-                let spo2Value = null;
+                let spo2 = null;
 
-                // Try different data formats
-                if (value.byteLength >= 2) {
-                    spo2Value = value.getUint8(1);  // Most common position
-                    if (spo2Value < 70 || spo2Value > 100) spo2Value = null;
+                // Multiple data format attempts
+                if (value.byteLength >= 2) spo2 = value.getUint8(1);
+                if (!spo2 && value.byteLength >= 3) spo2 = value.getUint8(2);
+                if (!spo2 && value.byteLength >= 4) {
+                    const raw = value.getUint16(2, true);
+                    if (raw >= 7000 && raw <= 10000) spo2 = raw / 100;
                 }
 
-                if (!spo2Value && value.byteLength >= 3) {
-                    spo2Value = value.getUint8(2);  // Alternative position
-                    if (spo2Value < 70 || spo2Value > 100) spo2Value = null;
-                }
-
-                if (!spo2Value && value.byteLength >= 4) {
-                    const rawValue = value.getUint16(2, true);
-                    if (rawValue >= 7000 && rawValue <= 10000) {
-                        spo2Value = rawValue / 100;
-                    }
-                }
-
-                if (spo2Value) {
-                    document.getElementById('spo2').textContent = Number(spo2Value).toFixed(0);
-                    log(`SpO2 update: ${spo2Value}%`);
+                if (spo2 && spo2 >= 70 && spo2 <= 100) {
+                    document.getElementById('spo2').textContent = Math.round(spo2);
+                    debugLog(`SpO2: ${spo2}%`);
                 } else {
-                    log(`Unrecognized SpO2 format: ${Array.from(new Uint8Array(event.target.value.buffer))}`);
+                    debugLog(`Raw SpO2 data: ${Array.from(new Uint8Array(value.buffer))}`);
                 }
-
             } catch (error) {
-                log(`SpO2 processing error: ${error.message}`, true);
+                debugLog(`SpO2 error: ${error}`, true);
             }
         }
     </script>
