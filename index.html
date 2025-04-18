@@ -8,23 +8,19 @@
         body { font-family: Arial, sans-serif; margin: 0; padding: 15px; }
         .section { margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 12px; }
         .data-display { font-size: 24px; margin: 15px 0; padding: 10px; background: white; border-radius: 8px; }
-        #debug-console { background: #1a1a1a; color: #00ff00; padding: 10px; font-family: monospace; border-radius: 8px; height: 300px; overflow-y: auto; }
-        button { padding: 12px 20px; background: #007bff; color: white; border: none; border-radius: 8px; width: 100%; margin: 5px 0; }
-        button:disabled { background: #6c757d; cursor: not-allowed; }
+        #debug-console { background: #1a1a1a; color: #00ff00; padding: 10px; font-family: monospace; border-radius: 8px; }
+        button { padding: 12px 20px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 8px; }
     </style>
 </head>
 <body>
     <div class="section">
         <button id="connectBtn">Connect Device</button>
-        <button id="startSpO2Btn" disabled>Start SpO2</button>
-        <button id="stopSpO2Btn" disabled>Stop SpO2</button>
     </div>
 
     <div class="section">
         <div class="data-display">
             ❤️ Heart Rate: <span id="heartRate">--</span> bpm<br>
-            📊 Last Readings: <span id="hrReadings">--</span><br>
-            📈 Average: <span id="avgHeartRate">--</span>
+            📊 Average: <span id="avgHeartRate">--</span>
         </div>
         <div class="data-display">
             🩸 SpO2: <span id="spo2">--</span>%
@@ -39,187 +35,48 @@
     <script>
         const debugConsole = document.getElementById('debug-console');
         let heartRateReadings = [];
-        const MAX_DISPLAY_READINGS = 10;
-        const SPO2_CHARACTERISTICS = [
-            '00006487-3c17-d293-8e48-14fe2e4da212',
-            '0000ffd2-0000-1000-8000-00805f9b34fb',
-            '0000fff2-0000-1000-8000-00805f9b34fb'
-        ];
-        let spo2Characteristics = [];
-        let device, server;
-        let spo2Interval = null;
+        let spo2Characteristic = null;
 
         function debugLog(message, isError = false) {
             const entry = document.createElement('div');
             entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
             entry.style.color = isError ? '#ff4444' : '#00ff00';
             debugConsole.prepend(entry);
-            if (debugConsole.childElementCount > 50) {
-                debugConsole.removeChild(debugConsole.lastChild);
-            }
-        }
-
-        async function startSpO2() {
-            document.getElementById('spo2').textContent = 'Starting...';
-            let notificationSuccess = false;
-
-            // Try enabling notifications
-            for (const char of spo2Characteristics) {
-                if (char.uuid === '00006487-3c17-d293-8e48-14fe2e4da212' && char.properties.notify) {
-                    for (let i = 0; i < 3; i++) {
-                        try {
-                            await char.startNotifications();
-                            char.addEventListener('characteristicvaluechanged', processSpO2);
-                            debugLog(`Subscribed to SpO2 notifications: ${char.uuid} (attempt ${i+1})`);
-                            notificationSuccess = true;
-                            break;
-                        } catch (error) {
-                            debugLog(`Notification setup failed for ${char.uuid} (attempt ${i+1}): ${error.message}`, true);
-                        }
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                    }
-                }
-            }
-
-            // Send start command
-            for (const char of spo2Characteristics) {
-                if (char.uuid === '0000fff2-0000-1000-8000-00805f9b34fb' && char.properties.write) {
-                    try {
-                        const command = new Uint8Array([0x01, 0x00, 0x00, 0x00]);
-                        await char.writeValue(command);
-                        debugLog(`Wrote ${command} to ${char.uuid} to start SpO2`);
-                    } catch (error) {
-                        debugLog(`Start write failed for ${char.uuid}: ${error.message}`, true);
-                    }
-                }
-            }
-
-            // Fallback to periodic reads if notifications fail
-            if (!notificationSuccess) {
-                debugLog('Starting periodic SpO2 reads as fallback');
-                spo2Interval = setInterval(async () => {
-                    for (const char of spo2Characteristics) {
-                        if (char.uuid === '0000ffd2-0000-1000-8000-00805f9b34fb' && char.properties.read) {
-                            try {
-                                const value = await char.readValue();
-                                debugLog(`Read SpO2 from ${char.uuid}: ${Array.from(new Uint8Array(value.buffer))}`);
-                                processSpO2({ target: { value, uuid: char.uuid }, type: 'read' });
-                            } catch (error) {
-                                debugLog(`Read failed for ${char.uuid}: ${error.message}`, true);
-                            }
-                        }
-                    }
-                }, 2000);
-            }
-
-            document.getElementById('spo2').textContent = 'Measuring...';
-            document.getElementById('startSpO2Btn').disabled = true;
-            document.getElementById('stopSpO2Btn').disabled = false;
-        }
-
-        async function stopSpO2() {
-            document.getElementById('spo2').textContent = 'Stopping...';
-            if (spo2Interval) {
-                clearInterval(spo2Interval);
-                spo2Interval = null;
-                debugLog('Stopped periodic SpO2 reads');
-            }
-
-            for (const char of spo2Characteristics) {
-                if (char.uuid === '00006487-3c17-d293-8e48-14fe2e4da212' && char.properties.notify) {
-                    try {
-                        char.removeEventListener('characteristicvaluechanged', processSpO2);
-                        debugLog(`Unsubscribed from SpO2 notifications: ${char.uuid}`);
-                    } catch (error) {
-                        debugLog(`Unsubscribe failed for ${char.uuid}: ${error.message}`, true);
-                    }
-                }
-                if (char.uuid === '0000fff2-0000-1000-8000-00805f9b34fb' && char.properties.write) {
-                    try {
-                        const command = new Uint8Array([0x00, 0x00, 0x00, 0x00]);
-                        await char.writeValue(command);
-                        debugLog(`Wrote ${command} to ${char.uuid} to stop SpO2`);
-                    } catch (error) {
-                        debugLog(`Stop write failed for ${char.uuid}: ${error.message}`, true);
-                    }
-                }
-            }
-
-            document.getElementById('spo2').textContent = '--';
-            document.getElementById('startSpO2Btn').disabled = false;
-            document.getElementById('stopSpO2Btn').disabled = true;
         }
 
         document.getElementById('connectBtn').addEventListener('click', async () => {
             try {
                 debugLog('Initializing BLE connection...');
-                device = await navigator.bluetooth.requestDevice({
+                const device = await navigator.bluetooth.requestDevice({
                     filters: [{ name: 'WAVESTYLE_55A0' }],
                     optionalServices: [
                         '0000180d-0000-1000-8000-00805f9b34fb',
-                        '00006287-3c17-d293-8e48-14fe2e4da212',
-                        '0000d0ff-3c17-d293-8e48-14fe2e4da212'
+                        '00006287-3c17-d293-8e48-14fe2e4da212'
                     ]
                 });
 
                 debugLog(`Connected to: ${device.name}`);
-                server = await device.gatt.connect();
+                const server = await device.gatt.connect();
                 debugLog('GATT connected');
 
                 // Heart Rate Setup
-                try {
-                    const hrService = await server.getPrimaryService('0000180d-0000-1000-8000-00805f9b34fb');
-                    const hrChar = await hrService.getCharacteristic('00002a37-0000-1000-8000-00805f9b34fb');
-                    await hrChar.startNotifications();
-                    hrChar.addEventListener('characteristicvaluechanged', processHR);
-                    debugLog('HR notifications enabled');
-                    document.getElementById('startSpO2Btn').disabled = false;
-                    document.getElementById('stopSpO2Btn').disabled = true;
-                } catch (hrError) {
-                    debugLog(`HR setup failed: ${hrError}`, true);
-                }
+                const hrService = await server.getPrimaryService('0000180d-0000-1000-8000-00805f9b34fb');
+                const hrChar = await hrService.getCharacteristic('00002a37-0000-1000-8000-00805f9b34fb');
+                await hrChar.startNotifications();
+                hrChar.addEventListener('characteristicvaluechanged', processHR);
+                debugLog('HR notifications enabled');
 
-                // SpO2 Setup
-                try {
-                    const services = await server.getPrimaryServices();
-                    spo2Characteristics = [];
-
-                    for (const service of services) {
-                        if (service.uuid === '00006287-3c17-d293-8e48-14fe2e4da212' || service.uuid === '0000d0ff-3c17-d293-8e48-14fe2e4da212') {
-                            const chars = await service.getCharacteristics();
-                            for (const char of chars) {
-                                if (SPO2_CHARACTERISTICS.includes(char.uuid)) {
-                                    spo2Characteristics.push(char);
-                                    debugLog(`Found SpO2 characteristic: ${char.uuid}, Properties: read=${char.properties.read}, write=${char.properties.write}, notify=${char.properties.notify}`);
-                                }
-                            }
-                        }
-                    }
-                } catch (spo2Error) {
-                    debugLog(`SpO2 service error: ${spo2Error.message}`, true);
-                }
-
-                device.addEventListener('gattserverdisconnected', () => {
-                    debugLog('Device disconnected', true);
-                    document.getElementById('heartRate').textContent = '--';
-                    document.getElementById('hrReadings').textContent = '--';
-                    document.getElementById('avgHeartRate').textContent = '--';
-                    document.getElementById('spo2').textContent = '--';
-                    document.getElementById('startSpO2Btn').disabled = true;
-                    document.getElementById('stopSpO2Btn').disabled = true;
-                    if (spo2Interval) {
-                        clearInterval(spo2Interval);
-                        spo2Interval = null;
-                    }
-                });
+                // Safe SpO2 Setup (Read Only)
+                const spo2Service = await server.getPrimaryService('00006287-3c17-d293-8e48-14fe2e4da212');
+                spo2Characteristic = await spo2Service.getCharacteristic('00006487-3c17-d293-8e48-14fe2e4da212');
+                await spo2Characteristic.startNotifications();
+                spo2Characteristic.addEventListener('characteristicvaluechanged', processSpO2);
+                debugLog('SpO2 notifications enabled - SAFE MODE');
 
             } catch (error) {
                 debugLog(`Connection error: ${error}`, true);
             }
         });
-
-        document.getElementById('startSpO2Btn').addEventListener('click', startSpO2);
-        document.getElementById('stopSpO2Btn').addEventListener('click', stopSpO2);
 
         function processHR(event) {
             try {
@@ -227,13 +84,11 @@
                 const flags = value.getUint8(0);
                 const rate = flags & 0x01 ? value.getUint16(1, true) : value.getUint8(1);
                 
+                heartRateReadings.push(rate);
+                heartRateReadings = heartRateReadings.slice(-30);
                 document.getElementById('heartRate').textContent = rate;
-                heartRateReadings = [...heartRateReadings.slice(-MAX_DISPLAY_READINGS), rate];
-                document.getElementById('hrReadings').textContent = heartRateReadings.join(', ');
-                
-                const avg = heartRateReadings.reduce((a, b) => a + b, 0) / heartRateReadings.length;
-                document.getElementById('avgHeartRate').textContent = avg.toFixed(2);
-                debugLog(`Heart Rate: ${rate} bpm`);
+                document.getElementById('avgHeartRate').textContent = 
+                    (heartRateReadings.reduce((a, b) => a + b, 0) / heartRateReadings.length).toFixed(1);
 
             } catch (error) {
                 debugLog(`HR processing error: ${error}`, true);
@@ -242,47 +97,23 @@
 
         function processSpO2(event) {
             try {
-                const value = new DataView(event.target.value.buffer);
-                const bytes = new Uint8Array(value.buffer);
-                const source = event.type === 'characteristicvaluechanged' ? 'notification' : 'read';
-                debugLog(`SpO2 RAW (${source}, ${event.target.uuid}): ${bytes.join(',')}`);
-                
-                let spo2Value = null;
-                const attempts = [
-                    () => bytes[0],                         // Byte 0
-                    () => bytes[1],                         // Byte 1
-                    () => bytes[2],                         // Byte 2
-                    () => bytes[3],                         // Byte 3
-                    () => bytes[4],                         // Byte 4
-                    () => bytes[1] + 13,                    // Byte 1 + 13 (prior success)
-                    () => bytes[0] + bytes[1],              // Sum bytes
-                    () => value.getUint16(0, true),         // 16-bit
-                    () => value.getUint16(2, true) / 100,   // Scaled 16-bit
-                    () => (bytes[1] << 8) | bytes[2],       // Combined bytes
-                    () => value.getFloat32(0, true)         // Float
-                ];
+                const rawData = new Uint8Array(event.target.value.buffer);
+                debugLog(`SPO2 SAFE RAW DATA: [${Array.from(rawData)}]`);
 
-                for (const attempt of attempts) {
-                    try {
-                        const result = attempt();
-                        if (result >= 70 && result <= 100) {
-                            spo2Value = Math.round(result);
-                            break;
-                        }
-                    } catch {}
+                // Passive Analysis Only
+                const potentialValues = [];
+                for(let i = 0; i < rawData.length; i++) {
+                    const byte = rawData[i];
+                    if(byte >= 70 && byte <= 100) potentialValues.push(byte);
                 }
 
-                if (spo2Value) {
-                    document.getElementById('spo2').textContent = spo2Value;
-                    debugLog(`Valid SpO2: ${spo2Value}% (${source}, ${event.target.uuid})`);
-                } else {
-                    debugLog(`Unrecognized SpO2 format: ${bytes.join(',')} (${source}, ${event.target.uuid})`);
-                    document.getElementById('spo2').textContent = 'Measuring...';
+                if(potentialValues.length > 0) {
+                    document.getElementById('spo2').textContent = potentialValues[0];
+                    debugLog(`Possible SpO2 value: ${potentialValues[0]}%`);
                 }
 
             } catch (error) {
                 debugLog(`SpO2 processing error: ${error}`, true);
-                document.getElementById('spo2').textContent = 'Measuring...';
             }
         }
     </script>
