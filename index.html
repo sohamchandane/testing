@@ -46,6 +46,7 @@
 <body>
   <h2>Smartwatch Bluetooth Scanner</h2>
   <button onclick="connectSmartwatch()">Scan & Connect</button>
+  <button onclick="readSpO2()" id="readSpO2Button" disabled>Read SpO2</button>
 
   <div class="charUUID"></div>
   <div class="output"></div>
@@ -84,6 +85,7 @@
       const hrDiv = document.getElementById("heartRateDisplay");
       const avgHRDisplay = document.getElementById("averageHeartRate");
       const spo2Div = document.getElementById("spo2Display");
+      const readSpO2Button = document.getElementById("readSpO2Button");
       console.log("Scanning for Bluetooth devices...");
       hrDebugLogs.push(`[${new Date().toLocaleTimeString()}] Scanning for Bluetooth devices...`);
       spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Scanning for Bluetooth devices...`);
@@ -104,6 +106,7 @@
         output.textContent = `Connected to ${device.name}`;
         hrDebugLogs.push(`[${new Date().toLocaleTimeString()}] Connected to ${device.name}`);
         spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Connected to ${device.name}`);
+        readSpO2Button.disabled = false;
         hrDebug.textContent = hrDebugLogs.join('\n');
         spo2Debug.textContent = spo2DebugLogs.join('\n');
 
@@ -155,34 +158,30 @@
                     characteristic.addEventListener('characteristicvaluechanged', handleSpO2Data);
                     spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] SpO2 notifications enabled for ${characteristic.uuid} (attempt ${i+1})`);
                     await new Promise(resolve => setTimeout(resolve, 1000));
+                    const descriptors = await characteristic.getDescriptors();
+                    for (const descriptor of descriptors) {
+                      if (descriptor.uuid === '00002902-0000-1000-8000-00805f9b34fb') {
+                        await descriptor.writeValue(new Uint8Array([0x01, 0x00]));
+                        spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Wrote to descriptor for ${characteristic.uuid}`);
+                      }
+                    }
                   } catch (e) {
-                    spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to start SpO2 notifications for ${characteristic.uuid} (attempt ${i+1}): ${e}`);
+                    spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to start SpO2 notifications or write descriptor for ${characteristic.uuid} (attempt ${i+1}): ${e}`);
                   }
                 }
               }
 
-              if (props.read) {
-                setInterval(async () => {
-                  try {
-                    const value = await characteristic.readValue();
-                    handleSpO2Data({ target: { value, uuid: characteristic.uuid } });
-                    spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Read SpO2 from ${characteristic.uuid}`);
-                  } catch (e) {
-                    spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to read SpO2 from ${characteristic.uuid}: ${e}`);
-                  }
-                }, 2000);
-              }
-
-              if (characteristic.uuid === '0000fff2-0000-1000-8000-00805f9b34fb' && props.write) {
+              if (props.write) {
                 const enableCommands = [
-                  new Uint8Array([0x01]),
-                  new Uint8Array([0x02]),
-                  new Uint8Array([0xFF])
+                  new Uint8Array([0xAA, 0x01]),
+                  new Uint8Array([0xF0, 0x01]),
+                  new Uint8Array([0x01, 0x00]),
+                  new Uint8Array([0x02, 0x00])
                 ];
                 for (const cmd of enableCommands) {
                   try {
                     await characteristic.writeValue(cmd);
-                    spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Wrote ${cmd} to ${characteristic.uuid} to enable notifications`);
+                    spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Wrote ${cmd} to ${characteristic.uuid} to enable SpO2`);
                   } catch (e) {
                     spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to write ${cmd} to ${characteristic.uuid}: ${e}`);
                   }
@@ -202,6 +201,7 @@
           spo2Div.textContent = 'Disconnected';
           hrDiv.textContent = 'Disconnected';
           avgHRDisplay.textContent = '0 bpm';
+          readSpO2Button.disabled = true;
           hrDebug.textContent = hrDebugLogs.join('\n');
           spo2Debug.textContent = spo2DebugLogs.join('\n');
         });
@@ -214,6 +214,30 @@
         hrDebug.textContent = hrDebugLogs.join('\n');
         spo2Debug.textContent = spo2DebugLogs.join('\n');
       }
+    }
+
+    async function readSpO2() {
+      const spo2Div = document.getElementById("spo2Display");
+      const spo2Debug = document.querySelector('.debug.spo2');
+      const readableUUIDs = [
+        '0000ffd2-0000-1000-8000-00805f9b34fb',
+        '0000fff1-0000-1000-8000-00805f9b34fb',
+        '0000fff3-0000-1000-8000-00805f9b34fb'
+      ];
+
+      spo2Div.textContent = 'Reading SpO2...';
+      for (const characteristic of potentialSpO2Characteristics) {
+        if (readableUUIDs.includes(characteristic.uuid)) {
+          try {
+            const value = await characteristic.readValue();
+            handleSpO2Data({ target: { value, uuid: characteristic.uuid }, type: 'read' });
+            spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Manual read SpO2 from ${characteristic.uuid}`);
+          } catch (e) {
+            spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to manually read SpO2 from ${characteristic.uuid}: ${e}`);
+          }
+        }
+      }
+      spo2Debug.textContent = spo2DebugLogs.join('\n');
     }
 
     function handleHeartRateData(event) {
