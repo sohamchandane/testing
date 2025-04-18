@@ -46,6 +46,7 @@
 <body>
   <h2>Smartwatch Bluetooth Scanner</h2>
   <button onclick="connectSmartwatch()">Scan & Connect</button>
+  <button onclick="startSpO2()" id="startSpO2Button" disabled>Start SpO2 Measurement</button>
   <button onclick="readSpO2()" id="readSpO2Button" disabled>Read SpO2</button>
 
   <div class="charUUID"></div>
@@ -86,6 +87,7 @@
       const avgHRDisplay = document.getElementById("averageHeartRate");
       const spo2Div = document.getElementById("spo2Display");
       const readSpO2Button = document.getElementById("readSpO2Button");
+      const startSpO2Button = document.getElementById("startSpO2Button");
       console.log("Scanning for Bluetooth devices...");
       hrDebugLogs.push(`[${new Date().toLocaleTimeString()}] Scanning for Bluetooth devices...`);
       spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Scanning for Bluetooth devices...`);
@@ -107,6 +109,7 @@
         hrDebugLogs.push(`[${new Date().toLocaleTimeString()}] Connected to ${device.name}`);
         spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Connected to ${device.name}`);
         readSpO2Button.disabled = false;
+        startSpO2Button.disabled = false;
         hrDebug.textContent = hrDebugLogs.join('\n');
         spo2Debug.textContent = spo2DebugLogs.join('\n');
 
@@ -173,10 +176,10 @@
 
               if (props.write) {
                 const enableCommands = [
-                  new Uint8Array([0xAA, 0x01]),
-                  new Uint8Array([0xF0, 0x01]),
-                  new Uint8Array([0x01, 0x00]),
-                  new Uint8Array([0x02, 0x00])
+                  new Uint8Array([0x55, 0x04, 0x01, 0x00]),
+                  new Uint8Array([0xB0, 0x01, 0x00, 0x00]),
+                  new Uint8Array([0xAA, 0x01, 0x00, 0x00]),
+                  new Uint8Array([0x01, 0x01, 0x00, 0x00])
                 ];
                 for (const cmd of enableCommands) {
                   try {
@@ -202,6 +205,7 @@
           hrDiv.textContent = 'Disconnected';
           avgHRDisplay.textContent = '0 bpm';
           readSpO2Button.disabled = true;
+          startSpO2Button.disabled = true;
           hrDebug.textContent = hrDebugLogs.join('\n');
           spo2Debug.textContent = spo2DebugLogs.join('\n');
         });
@@ -216,24 +220,61 @@
       }
     }
 
+    async function startSpO2() {
+      const spo2Div = document.getElementById("spo2Display");
+      const spo2Debug = document.querySelector('.debug.spo2');
+      const writeUUIDs = [
+        '0000fff2-0000-1000-8000-00805f9b34fb',
+        '00006487-3c17-d293-8e48-14fe2e4da212'
+      ];
+      const enableCommands = [
+        new Uint8Array([0x55, 0x04, 0x01, 0x00]),
+        new Uint8Array([0xB0, 0x01, 0x00, 0x00]),
+        new Uint8Array([0xAA, 0x01, 0x00, 0x00]),
+        new Uint8Array([0x01, 0x01, 0x00, 0x00])
+      ];
+
+      spo2Div.textContent = 'Starting SpO2 measurement...';
+      for (const characteristic of potentialSpO2Characteristics) {
+        if (writeUUIDs.includes(characteristic.uuid)) {
+          for (const cmd of enableCommands) {
+            try {
+              await characteristic.writeValue(cmd);
+              spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Wrote ${cmd} to ${characteristic.uuid} to start SpO2`);
+            } catch (e) {
+              spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to write ${cmd} to ${characteristic.uuid}: ${e}`);
+            }
+          }
+        }
+      }
+      spo2Div.textContent = 'Waiting for SpO2 data...';
+      spo2Debug.textContent = spo2DebugLogs.join('\n');
+    }
+
     async function readSpO2() {
       const spo2Div = document.getElementById("spo2Display");
       const spo2Debug = document.querySelector('.debug.spo2');
       const readableUUIDs = [
         '0000ffd2-0000-1000-8000-00805f9b34fb',
         '0000fff1-0000-1000-8000-00805f9b34fb',
-        '0000fff3-0000-1000-8000-00805f9b34fb'
+        '0000fff3-0000-1000-8000-00805f9b34fb',
+        '0000ffd1-0000-1000-8000-00805f9b34fb',
+        '0000ffd8-0000-1000-8000-00805f9b34fb',
+        '0000ffe0-0000-1000-8000-00805f9b34fb'
       ];
 
       spo2Div.textContent = 'Reading SpO2...';
       for (const characteristic of potentialSpO2Characteristics) {
         if (readableUUIDs.includes(characteristic.uuid)) {
-          try {
-            const value = await characteristic.readValue();
-            handleSpO2Data({ target: { value, uuid: characteristic.uuid }, type: 'read' });
-            spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Manual read SpO2 from ${characteristic.uuid}`);
-          } catch (e) {
-            spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to manually read SpO2 from ${characteristic.uuid}: ${e}`);
+          for (let i = 0; i < 5; i++) {
+            try {
+              const value = await characteristic.readValue();
+              handleSpO2Data({ target: { value, uuid: characteristic.uuid }, type: 'read' });
+              spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Manual read SpO2 from ${characteristic.uuid} (attempt ${i+1})`);
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            } catch (e) {
+              spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Failed to manually read SpO2 from ${characteristic.uuid} (attempt ${i+1}): ${e}`);
+            }
           }
         }
       }
@@ -321,22 +362,15 @@
             break;
           }
         }
-        if (!spo2 && uuid === '0000ffd2-0000-1000-8000-00805f9b34fb' && value.getUint8(1) === 86) {
-          spo2 = value.getUint8(1) + 13; // 86 -> 99
-          console.log(`Scaled SpO2 from ${uuid}:`, spo2);
-          spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Scaled SpO2 from ${uuid}: ${spo2}`);
-        }
-        if (!spo2 || spo2 < 60 || spo2 > 100) {
-          spo2 = value.getUint8(4); // Try byte 4
-          if (spo2 >= 60 && spo2 <= 100) {
-            spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Found potential SpO2 at byte 4: ${spo2}`);
-          }
-        }
-        if (!spo2 || spo2 < 60 || spo2 > 100) {
+        if (!spo2) {
           spo2 = value.getUint16(0, true); // Try 16-bit
           if (spo2 >= 60 && spo2 <= 100) {
             spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Found potential SpO2 as 16-bit: ${spo2}`);
           }
+        }
+        if (!spo2 || spo2 < 60 || spo2 > 100) {
+          spo2 = value.getUint8(0); // Try byte 0
+          spo2DebugLogs.push(`[${new Date().toLocaleTimeString()}] Testing byte 0 for ${uuid}: ${spo2}`);
         }
       } catch (e) {
         console.warn("Error parsing SpO2 data:", e);
