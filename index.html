@@ -96,7 +96,7 @@
                 const server = await device.gatt.connect();
 
                 // Heart Rate
-                const hrService = await server.getPrimaryService(0x180D); // Short-form UUID
+                const hrService = await server.getPrimaryService('heart_rate'); // Short-form UUID
                 const hrChar = await hrService.getCharacteristic(0x2A37); // Short-form UUID
                 hrChar.addEventListener('characteristicvaluechanged', e => {
                     const value = e.target.value;
