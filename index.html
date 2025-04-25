@@ -65,6 +65,10 @@
         <div>Average SpO2: <span id="avgSpo2">--</span>%</div>
     </div>
 
+ Distance: <span id="distance">--</span> m<br>
+    Pace: <span id="pace">--</span> min/km<br>
+    Calories: <span id="calories">--</span> kcal<br>
+
     <div id="debug"></div>
 
     <script>
@@ -83,10 +87,10 @@
             try {
                 log('Requesting device...');
                 const device = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
+                    filters: [{ services: [0x180D] }], // Filter for devices with Heart Rate Service
                     optionalServices: [
-                        0x180D, // Heart Rate Service (short-form)
-                        0x1822, // Pulse Oximeter Service (short-form)
+                        0x180D, // Heart Rate Service
+                        0x1822, // Pulse Oximeter Service
                         '00006287-3c17-d293-8e48-14fe2e4da212', // Proprietary
                         '0000d0ff-3c17-d293-8e48-14fe2e4da212'  // Proprietary
                     ]
@@ -108,7 +112,7 @@
 
         async function investigateHeartRate(server) {
             const services = [
-                0x180D, // Standard Heart Rate Service (short-form)
+                0x180D, // Standard Heart Rate Service
                 '00006287-3c17-d293-8e48-14fe2e4da212', // Proprietary
                 '0000d0ff-3c17-d293-8e48-14fe2e4da212'  // Proprietary
             ];
@@ -125,20 +129,27 @@
 
                         // Handle standard Heart Rate characteristics
                         if (serviceUUID === 0x180D) {
-                            if (char.uuid === 0x2A37 && char.properties.notify) {
+                            if (char.uuid === 0x2A37) {
                                 // Heart Rate Measurement
-                                await char.startNotifications();
-                                char.addEventListener('characteristicvaluechanged', e => {
-                                    const value = e.target.value;
-                                    const rate = value.getUint8(1);
-                                    document.getElementById('hr').textContent = rate;
-                                    hrValues.push(rate);
-                                    if (hrValues.length > 10) hrValues.shift();
-                                    updateStats();
-                                    log(`Heart Rate: ${rate} bpm from ${char.uuid}`);
-                                });
-                                log(`Monitoring Heart Rate characteristic: ${char.uuid}`);
-                                return; // Stop after finding the primary heart rate characteristic
+                                if (!char.properties.notify) {
+                                    log(`Warning: ${char.uuid} does not support notifications`, true);
+                                } else {
+                                    // Explicitly enable notifications
+                                    await char.startNotifications();
+                                    char.addEventListener('characteristicvaluechanged', e => {
+                                        const value = e.target.value;
+                                        const rate = value.getUint8(1);
+                                        if (rate >= 30 && rate <= 200) {
+                                            document.getElementById('hr').textContent = rate;
+                                            hrValues.push(rate);
+                                            if (hrValues.length > 10) hrValues.shift();
+                                            updateStats();
+                                            log(`Heart Rate: ${rate} bpm from ${char.uuid}`);
+                                        }
+                                    });
+                                    log(`Monitoring Heart Rate characteristic: ${char.uuid}`);
+                                    return; // Stop after setting up the primary heart rate characteristic
+                                }
                             } else if (char.uuid === 0x2A38 && char.properties.read) {
                                 // Body Sensor Location
                                 const value = await char.readValue();
@@ -146,9 +157,13 @@
                                 const locations = ['Other', 'Chest', 'Wrist', 'Finger', 'Hand', 'Ear Lobe', 'Foot'];
                                 log(`Body Sensor Location: ${locations[location] || 'Unknown'} from ${char.uuid}`);
                             } else if (char.uuid === 0x2A39 && char.properties.write) {
-                                // Heart Rate Control Point (e.g., reset energy expended)
-                                await char.writeValue(new Uint8Array([0x01])); // Reset energy expended
-                                log(`Sent reset command to Heart Rate Control Point: ${char.uuid}`);
+                                // Heart Rate Control Point (try to activate sensor)
+                                try {
+                                    await char.writeValue(new Uint8Array([0x01])); // Reset energy expended or activate
+                                    log(`Sent command to Heart Rate Control Point: ${char.uuid}`);
+                                } catch (err) {
+                                    log(`Failed to write to ${char.uuid}: ${err.message}`, true);
+                                }
                             }
                         } else {
                             // Check proprietary characteristics for heart rate data
@@ -156,8 +171,8 @@
                                 await char.startNotifications();
                                 char.addEventListener('characteristicvaluechanged', e => {
                                     const raw = new Uint8Array(e.target.value.buffer);
-                                    const rate = raw[0]; // Simplistic parsing, assuming first byte is heart rate
-                                    if (rate >= 30 && rate <= 200) { // Reasonable heart rate range
+                                    const rate = raw[0]; // Simplistic parsing
+                                    if (rate >= 30 && rate <= 200) {
                                         document.getElementById('hr').textContent = rate;
                                         hrValues.push(rate);
                                         if (hrValues.length > 10) hrValues.shift();
@@ -179,7 +194,7 @@
 
         async function investigateSpo2(server) {
             const services = [
-                0x1822, // Standard Pulse Oximeter Service (short-form)
+                0x1822, // Standard Pulse Oximeter Service
                 '00006287-3c17-d293-8e48-14fe2e4da212', // Proprietary
                 '0000d0ff-3c17-d293-8e48-14fe2e4da212'  // Proprietary
             ];
@@ -203,13 +218,13 @@
                                 // Handle standard Pulse Oximeter characteristics
                                 if (serviceUUID === 0x1822 &&
                                     (char.uuid === 0x2A5E || // Spot-Check
-                                    char.uuid === 0x2A5F)) { // Continuous
+                                     char.uuid === 0x2A5F)) { // Continuous
                                     // Parse according to Bluetooth SIG format
                                     const flags = raw[0];
                                     const spo2FieldPresent = (flags & 0x01) === 0x01;
                                     if (spo2FieldPresent) {
-                                        // SpO2 is a 16-bit unsigned integer (SFLOAT format, simplified here)
-                                        spo2Value = raw[1] + (raw[2] << 8) / 100; // Example parsing, adjust per spec
+                                        // Simplified SFLOAT parsing
+                                        spo2Value = raw[1] + (raw[2] << 8) / 100;
                                         if (spo2Value >= 50 && spo2Value <= 100) {
                                             document.getElementById('spo2').textContent = spo2Value.toFixed(1);
                                             spo2Values.push(spo2Value);
@@ -220,7 +235,7 @@
                                     }
                                 } else {
                                     // Fallback for proprietary characteristics
-                                    spo2Value = raw[0]; // Simplistic, as original code
+                                    spo2Value = raw[0];
                                     if (spo2Value >= 50 && spo2Value <= 100) {
                                         document.getElementById('spo2').textContent = spo2Value;
                                         spo2Values.push(spo2Value);
