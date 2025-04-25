@@ -62,9 +62,8 @@
 </head>
 <body>
     <button id="connect">Connect Smartwatch</button>
-    <button id="startHR" disabled>Start Heart Rate</button>
 
-    <div id="data">
+    <div id="data"></div>
         <div>Heart Rate: <span id="hr">--</span> bpm</div>
         <div>SpO2: <span id="spo2">--</span>%</div>
         <div id="hrHistory">Recent Heart Rates: <span id="hrList">--</span></div>
@@ -81,7 +80,6 @@
         const debug = document.getElementById('debug');
         let hrValues = [];
         let spo2Values = [];
-        let hrControlPoint; // Add this with other global variables
 
         function updateStats() {
             const avg = arr => arr.length ? (arr.reduce((a, b) => a + b) / arr.length).toFixed(1) : '--';
@@ -124,15 +122,6 @@
 
                 // SpO2
                 await investigateSpo2(server);
-
-                // After setting up heart rate notifications, add this:
-                try {
-                    hrControlPoint = await hrService.getCharacteristic(0x2A39); // Heart Rate Control Point
-                    document.getElementById('startHR').disabled = false;
-                    log('Heart Rate Control Point characteristic found');
-                } catch (err) {
-                    log('Heart Rate Control Point not available', true);
-                }
 
             } 
             catch (error) {
@@ -235,30 +224,6 @@
         }
 
         document.getElementById('connect').addEventListener('click', connectDevice);
-        document.getElementById('startHR').addEventListener('click', startHeartRateMeasurement);
-
-        // Add this new function to handle HR control
-        async function startHeartRateMeasurement() {
-            try {
-                if (!hrControlPoint) {
-                    throw new Error('Heart Rate Control Point not available');
-                }
-
-                // Command to start continuous measurement (0x01)
-                await hrControlPoint.writeValue(new Uint8Array([0x01]));
-                log('Started heart rate measurement');
-                
-                // Disable the button while measurement is active
-                document.getElementById('startHR').disabled = true;
-                
-                // Re-enable after 1 second to allow for another command
-                setTimeout(() => {
-                    document.getElementById('startHR').disabled = false;
-                }, 1000);
-            } catch (error) {
-                log(`Failed to start heart rate measurement: ${error.message}`, true);
-            }
-        }
     </script>
 </body>
 </html>
