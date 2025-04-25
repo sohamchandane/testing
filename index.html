@@ -118,22 +118,30 @@
 
         async function investigateSpo2(server) {
             try {
-                // First, let's discover all available services
-                const services = await server.getPrimaryServices();
-                log(`Found ${services.length} services`);
+                // Target proprietary services that might contain SpO2 data
+                const targetServices = [
+                    '00006287-3c17-d293-8e48-14fe2e4da212',
+                    '0000d0ff-3c17-d293-8e48-14fe2e4da212'
+                ];
 
-                for (const service of services) {
+                for (const serviceUUID of targetServices) {
                     try {
-                        // Get all characteristics for each service
+                        const service = await server.getPrimaryService(serviceUUID);
+                        log(`Investigating SpO2 service: ${serviceUUID}`);
+                        
                         const characteristics = await service.getCharacteristics();
-                        log(`Service ${service.uuid} has ${characteristics.length} characteristics`);
-
+                        
                         for (const characteristic of characteristics) {
-                            log(`Investigating characteristic: ${characteristic.uuid}`);
-                            log(`Properties: ${JSON.stringify(characteristic.properties)}`);
+                            const props = characteristic.properties;
+                            log(`Found characteristic: ${characteristic.uuid}`);
+                            log(`Properties: ${JSON.stringify(props)}`);
 
-                            // Try to read and subscribe to all characteristics
-                            if (characteristic.properties.notify) {
+                            // Skip the heart rate characteristic to avoid confusion
+                            if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb') {
+                                continue;
+                            }
+
+                            if (props.notify || props.indicate) {
                                 await characteristic.startNotifications();
                                 log(`Started notifications for ${characteristic.uuid}`);
 
@@ -141,67 +149,68 @@
                                     try {
                                         const value = e.target.value;
                                         const raw = new Uint8Array(value.buffer);
-                                        log(`Received data from ${characteristic.uuid}: [${Array.from(raw).join(', ')}]`);
+                                        log(`SpO2 Raw data from ${characteristic.uuid}: [${Array.from(raw).join(', ')}]`);
 
-                                        // Try multiple parsing methods
+                                        // Try parsing SpO2 data
                                         let spo2Value;
 
-                                        // Method 1: Direct value
-                                        spo2Value = raw[0];
+                                        // Try different parsing methods based on the characteristic
+                                        if (characteristic.uuid.includes('6387') || characteristic.uuid.includes('6487')) {
+                                            // For proprietary service 6287
+                                            spo2Value = raw[0];
+                                        } else if (characteristic.uuid.includes('ffd')) {
+                                            // For proprietary service d0ff
+                                            if (raw.length >= 2) {
+                                                spo2Value = raw[1];
+                                            }
+                                        }
+
                                         if (isValidSpO2(spo2Value)) {
                                             updateSpO2Display(spo2Value);
-                                            log(`SpO2 found (Method 1): ${spo2Value}%`);
-                                            return;
+                                            log(`SpO2 value found: ${spo2Value}% from ${characteristic.uuid}`);
                                         }
-
-                                        // Method 2: Second byte
-                                        if (raw.length >= 2) {
-                                            spo2Value = raw[1];
-                                            if (isValidSpO2(spo2Value)) {
-                                                updateSpO2Display(spo2Value);
-                                                log(`SpO2 found (Method 2): ${spo2Value}%`);
-                                                return;
-                                            }
-                                        }
-
-                                        // Method 3: 16-bit value
-                                        if (raw.length >= 2) {
-                                            spo2Value = (raw[1] << 8) | raw[0];
-                                            if (spo2Value > 100) {
-                                                spo2Value = spo2Value / 100;
-                                            }
-                                            if (isValidSpO2(spo2Value)) {
-                                                updateSpO2Display(spo2Value);
-                                                log(`SpO2 found (Method 3): ${spo2Value}%`);
-                                                return;
-                                            }
-                                        }
-
-                                        // Log the attempt
-                                        log(`Could not parse SpO2 from data: [${Array.from(raw).join(', ')}]`);
                                     } catch (err) {
-                                        log(`Error parsing data: ${err.message}`, true);
+                                        log(`Error parsing SpO2 data: ${err.message}`, true);
                                     }
                                 });
                             }
 
-                            // Try reading the initial value
-                            if (characteristic.properties.read) {
+                            // Try initial read if supported
+                            if (props.read) {
                                 try {
                                     const value = await characteristic.readValue();
                                     const raw = new Uint8Array(value.buffer);
-                                    log(`Initial read from ${characteristic.uuid}: [${Array.from(raw).join(', ')}]`);
+                                    
+                                    // Log initial values for debugging
+                                    if (raw.length > 0) {
+                                        log(`Initial SpO2 read from ${characteristic.uuid}: [${Array.from(raw).join(', ')}]`);
+                                        
+                                        // Try to parse initial value
+                                        let initialValue;
+                                        if (characteristic.uuid.includes('6387') || characteristic.uuid.includes('6487')) {
+                                            initialValue = raw[0];
+                                        } else if (characteristic.uuid.includes('ffd')) {
+                                            if (raw.length >= 2) {
+                                                initialValue = raw[1];
+                                            }
+                                        }
+
+                                        if (isValidSpO2(initialValue)) {
+                                            updateSpO2Display(initialValue);
+                                            log(`Initial SpO2 value found: ${initialValue}%`);
+                                        }
+                                    }
                                 } catch (readErr) {
                                     log(`Failed to read ${characteristic.uuid}: ${readErr.message}`, true);
                                 }
                             }
                         }
                     } catch (serviceErr) {
-                        log(`Error with service ${service.uuid}: ${serviceErr.message}`, true);
+                        log(`Error with service ${serviceUUID}: ${serviceErr.message}`, true);
                     }
                 }
             } catch (err) {
-                log(`Failed to investigate services: ${err.message}`, true);
+                log(`Failed to investigate SpO2 services: ${err.message}`, true);
             }
         }
 
