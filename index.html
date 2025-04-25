@@ -85,8 +85,8 @@
                 const device = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
                     optionalServices: [
-                        '0000180d-0000-1000-8000-00805f9b34fb', // Heart Rate Service
-                        '00001822-0000-1000-8000-00805f9b34fb', // Pulse Oximeter Service
+                        0x180D, // Heart Rate Service (short-form)
+                        0x1822, // Pulse Oximeter Service (short-form)
                         '00006287-3c17-d293-8e48-14fe2e4da212', // Proprietary
                         '0000d0ff-3c17-d293-8e48-14fe2e4da212'  // Proprietary
                     ]
@@ -96,8 +96,8 @@
                 const server = await device.gatt.connect();
 
                 // Heart Rate
-                const hrService = await server.getPrimaryService('0000180d-0000-1000-8000-00805f9b34fb');
-                const hrChar = await hrService.getCharacteristic('00002a37-0000-1000-8000-00805f9b34fb');
+                const hrService = await server.getPrimaryService(0x180D); // Short-form UUID
+                const hrChar = await hrService.getCharacteristic(0x2A37); // Short-form UUID
                 hrChar.addEventListener('characteristicvaluechanged', e => {
                     const value = e.target.value;
                     const rate = value.getUint8(1);
@@ -119,7 +119,7 @@
 
         async function investigateSpo2(server) {
             const services = [
-                '00001822-0000-1000-8000-00805f9b34fb', // Standard Pulse Oximeter Service
+                0x1822, // Standard Pulse Oximeter Service (short-form)
                 '00006287-3c17-d293-8e48-14fe2e4da212', // Proprietary
                 '0000d0ff-3c17-d293-8e48-14fe2e4da212'  // Proprietary
             ];
@@ -141,9 +141,9 @@
                                 let spo2Value;
 
                                 // Handle standard Pulse Oximeter characteristics
-                                if (serviceUUID === '00001822-0000-1000-8000-00805f9b34fb' &&
-                                    (char.uuid === '00002a5e-0000-1000-8000-00805f9b34fb' || // Spot-Check
-                                    char.uuid === '00002a5f-0000-1000-8000-00805f9b34fb')) { // Continuous
+                                if (serviceUUID === 0x1822 &&
+                                    (char.uuid === 0x2A5E || // Spot-Check (short-form)
+                                    char.uuid === 0x2A5F)) { // Continuous (short-form)
                                     // Parse according to Bluetooth SIG format
                                     const flags = raw[0];
                                     const spo2FieldPresent = (flags & 0x01) === 0x01;
