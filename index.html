@@ -87,6 +87,7 @@
             try {
                 log('Requesting device...');
                 const device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
                     optionalServices: [
                         0x180D, // Heart Rate Service
                         0x1822, // Pulse Oximeter Service
