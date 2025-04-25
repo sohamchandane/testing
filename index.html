@@ -81,7 +81,6 @@
 
         async function connectDevice() {
             try {
-                log('Requesting device...');
                 const device = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
                     optionalServices: [
@@ -119,9 +118,17 @@
 
         async function investigateSpo2(server) {
             const services = [
-                0x1822, // Standard Pulse Oximeter Service (short-form)
+                0x1822, // Standard Pulse Oximeter Service
+                '00001822-0000-1000-8000-00805f9b34fb', // Full UUID format
                 '00006287-3c17-d293-8e48-14fe2e4da212', // Proprietary
                 '0000d0ff-3c17-d293-8e48-14fe2e4da212'  // Proprietary
+            ];
+
+            const spo2Characteristics = [
+                0x2A5E, // SpO2 Spot-Check
+                0x2A5F, // SpO2 Continuous
+                '00002a5e-0000-1000-8000-00805f9b34fb', // Full UUID format
+                '00002a5f-0000-1000-8000-00805f9b34fb', // Full UUID format
             ];
 
             for (const serviceUUID of services) {
@@ -134,51 +141,72 @@
                         const props = Object.keys(char.properties).filter(p => char.properties[p]);
                         log(`Characteristic: ${char.uuid} [${props.join(', ')}]`);
 
-                        if (char.properties.notify) {
-                            await char.startNotifications();
-                            char.addEventListener('characteristicvaluechanged', e => {
-                                const raw = new Uint8Array(e.target.value.buffer);
-                                let spo2Value;
+                        if (char.properties.notify || char.properties.read) {
+                            if (char.properties.notify) {
+                                await char.startNotifications();
+                            }
+                            
+                            char.addEventListener('characteristicvaluechanged', async (e) => {
+                                try {
+                                    const value = e.target.value;
+                                    const raw = new Uint8Array(value.buffer);
+                                    let spo2Value;
 
-                                // Handle standard Pulse Oximeter characteristics
-                                if (serviceUUID === 0x1822 &&
-                                    (char.uuid === 0x2A5E || // Spot-Check (short-form)
-                                    char.uuid === 0x2A5F)) { // Continuous (short-form)
-                                    // Parse according to Bluetooth SIG format
-                                    const flags = raw[0];
-                                    const spo2FieldPresent = (flags & 0x01) === 0x01;
-                                    if (spo2FieldPresent) {
-                                        // SpO2 is a 16-bit unsigned integer (SFLOAT format, simplified here)
-                                        spo2Value = raw[1] + (raw[2] << 8) / 100; // Example parsing, adjust per spec
-                                        if (spo2Value >= 50 && spo2Value <= 100) {
-                                            document.getElementById('spo2').textContent = spo2Value.toFixed(1);
-                                            spo2Values.push(spo2Value);
-                                            if (spo2Values.length > 10) spo2Values.shift();
-                                            updateStats();
-                                            log(`SpO2: ${spo2Value.toFixed(1)}% from ${char.uuid}`);
+                                    // Try different parsing methods
+                                    if (raw.length >= 2) {
+                                        // Method 1: Direct value in first byte
+                                        spo2Value = raw[0];
+                                        
+                                        // Method 2: Check if it's standard format
+                                        if (!isValidSpO2(spo2Value)) {
+                                            const flags = raw[0];
+                                            spo2Value = raw[1];
+                                            if ((flags & 0x01) && raw.length >= 3) {
+                                                // Try SFLOAT format
+                                                spo2Value = parseFloat((raw[1] + (raw[2] << 8)) / 100);
+                                            }
+                                        }
+                                        
+                                        // Method 3: Try reading as 16-bit integer
+                                        if (!isValidSpO2(spo2Value)) {
+                                            spo2Value = (raw[1] << 8) | raw[0];
+                                            if (spo2Value > 100) {
+                                                spo2Value = spo2Value / 100;
+                                            }
+                                        }
+
+                                        if (isValidSpO2(spo2Value)) {
+                                            updateSpO2Display(spo2Value);
+                                            log(`SpO2 value detected: ${spo2Value}% from ${char.uuid}`);
                                         }
                                     }
-                                } else {
-                                    // Fallback for proprietary characteristics
-                                    spo2Value = raw[0]; // Simplistic, as original code
-                                    if (spo2Value >= 50 && spo2Value <= 100) {
-                                        document.getElementById('spo2').textContent = spo2Value;
-                                        spo2Values.push(spo2Value);
-                                        if (spo2Values.length > 10) spo2Values.shift();
-                                        updateStats();
-                                        log(`SpO2 (proprietary): ${spo2Value}% from ${char.uuid}`);
-                                    }
+                                } catch (err) {
+                                    log(`Error parsing SpO2: ${err.message}`, true);
                                 }
                             });
-                            log(`Monitoring SpO2 characteristic: ${char.uuid}`);
-                            return; // Stop after finding a notifying characteristic
+
+                            // Try initial read if supported
+                            if (char.properties.read) {
+                                const initialValue = await char.readValue();
+                                log(`Initial read from ${char.uuid}: ${new Uint8Array(initialValue.buffer)}`);
+                            }
                         }
                     }
                 } catch (err) {
-                    log(`Skipping ${serviceUUID}: ${err.message}`);
+                    log(`Service ${serviceUUID} error: ${err.message}`);
                 }
             }
-            log('No suitable SpO2 characteristic found', true);
+        }
+
+        function isValidSpO2(value) {
+            return typeof value === 'number' && value >= 50 && value <= 100;
+        }
+
+        function updateSpO2Display(value) {
+            document.getElementById('spo2').textContent = value.toFixed(1);
+            spo2Values.push(Number(value));
+            if (spo2Values.length > 10) spo2Values.shift();
+            updateStats();
         }
 
         function log(message, isError = false) {
