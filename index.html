@@ -96,7 +96,18 @@
                 const server = await device.gatt.connect();
 
                 // Heart Rate
-                await investigateHeartRate(server);
+                const hrService = await server.getPrimaryService(0x180D); // Short-form UUID
+                const hrChar = await hrService.getCharacteristic(0x2A37); // Short-form UUID
+                hrChar.addEventListener('characteristicvaluechanged', e => {
+                    const value = e.target.value;
+                    const rate = value.getUint8(1);
+                    document.getElementById('hr').textContent = rate;
+                    hrValues.push(rate);
+                    if (hrValues.length > 10) hrValues.shift();
+                    updateStats();
+                });
+                await hrChar.startNotifications();
+                log('Heart rate notifications started');
 
                 // SpO2
                 await investigateSpo2(server);
@@ -104,77 +115,6 @@
             } catch (error) {
                 log(`Error: ${error.message}`, true);
             }
-        }
-
-        async function investigateHeartRate(server) {
-            const services = [
-                0x180D, // Standard Heart Rate Service (short-form)
-                '00006287-3c17-d293-8e48-14fe2e4da212', // Proprietary
-                '0000d0ff-3c17-d293-8e48-14fe2e4da212'  // Proprietary
-            ];
-
-            for (const serviceUUID of services) {
-                try {
-                    const service = await server.getPrimaryService(serviceUUID);
-                    log(`Found service: ${serviceUUID}`);
-                    const characteristics = await service.getCharacteristics();
-
-                    for (const char of characteristics) {
-                        const props = Object.keys(char.properties).filter(p => char.properties[p]);
-                        log(`Characteristic: ${char.uuid} [${props.join(', ')}]`);
-
-                        // Handle standard Heart Rate characteristics
-                        if (serviceUUID === 0x180D) {
-                            if (char.uuid === 0x2A37 && char.properties.notify) {
-                                // Heart Rate Measurement
-                                await char.startNotifications();
-                                char.addEventListener('characteristicvaluechanged', e => {
-                                    const value = e.target.value;
-                                    const rate = value.getUint8(1);
-                                    document.getElementById('hr').textContent = rate;
-                                    hrValues.push(rate);
-                                    if (hrValues.length > 10) hrValues.shift();
-                                    updateStats();
-                                    log(`Heart Rate: ${rate} bpm from ${char.uuid}`);
-                                });
-                                log(`Monitoring Heart Rate characteristic: ${char.uuid}`);
-                                return; // Stop after finding the primary heart rate characteristic
-                            } else if (char.uuid === 0x2A38 && char.properties.read) {
-                                // Body Sensor Location
-                                const value = await char.readValue();
-                                const location = value.getUint8(0);
-                                const locations = ['Other', 'Chest', 'Wrist', 'Finger', 'Hand', 'Ear Lobe', 'Foot'];
-                                log(`Body Sensor Location: ${locations[location] || 'Unknown'} from ${char.uuid}`);
-                            } else if (char.uuid === 0x2A39 && char.properties.write) {
-                                // Heart Rate Control Point (e.g., reset energy expended)
-                                await char.writeValue(new Uint8Array([0x01])); // Reset energy expended
-                                log(`Sent reset command to Heart Rate Control Point: ${char.uuid}`);
-                            }
-                        } else {
-                            // Check proprietary characteristics for heart rate data
-                            if (char.properties.notify) {
-                                await char.startNotifications();
-                                char.addEventListener('characteristicvaluechanged', e => {
-                                    const raw = new Uint8Array(e.target.value.buffer);
-                                    const rate = raw[0]; // Simplistic parsing, assuming first byte is heart rate
-                                    if (rate >= 30 && rate <= 200) { // Reasonable heart rate range
-                                        document.getElementById('hr').textContent = rate;
-                                        hrValues.push(rate);
-                                        if (hrValues.length > 10) hrValues.shift();
-                                        updateStats();
-                                        log(`Heart Rate (proprietary): ${rate} bpm from ${char.uuid}`);
-                                    }
-                                });
-                                log(`Monitoring proprietary Heart Rate characteristic: ${char.uuid}`);
-                                return; // Stop after finding a notifying characteristic
-                            }
-                        }
-                    }
-                } catch (err) {
-                    log(`Skipping ${serviceUUID}: ${err.message}`);
-                }
-            }
-            log('No suitable Heart Rate characteristic found', true);
         }
 
         async function investigateSpo2(server) {
@@ -202,8 +142,8 @@
 
                                 // Handle standard Pulse Oximeter characteristics
                                 if (serviceUUID === 0x1822 &&
-                                    (char.uuid === 0x2A5E || // Spot-Check
-                                    char.uuid === 0x2A5F)) { // Continuous
+                                    (char.uuid === 0x2A5E || // Spot-Check (short-form)
+                                    char.uuid === 0x2A5F)) { // Continuous (short-form)
                                     // Parse according to Bluetooth SIG format
                                     const flags = raw[0];
                                     const spo2FieldPresent = (flags & 0x01) === 0x01;
