@@ -118,111 +118,79 @@
 
         async function investigateSpo2(server) {
             try {
-                // Target proprietary services that might contain SpO2 data
-                const targetServices = [
-                    '00006287-3c17-d293-8e48-14fe2e4da212',
-                    '0000d0ff-3c17-d293-8e48-14fe2e4da212'
-                ];
+                // Focus on service 0x6287 which is likely the SpO2 service
+                const service = await server.getPrimaryService('00006287-3c17-d293-8e48-14fe2e4da212');
+                log(`Connected to SpO2 service`);
+                
+                // Get all characteristics
+                const characteristics = await service.getCharacteristics();
+                
+                for (const characteristic of characteristics) {
+                    const props = characteristic.properties;
+                    log(`Found characteristic: ${characteristic.uuid}`);
+                    log(`Available properties: ${Object.keys(props).filter(k => props[k]).join(', ')}`);
 
-                for (const serviceUUID of targetServices) {
-                    try {
-                        const service = await server.getPrimaryService(serviceUUID);
-                        log(`Investigating SpO2 service: ${serviceUUID}`);
-                        
-                        const characteristics = await service.getCharacteristics();
-                        
-                        for (const characteristic of characteristics) {
-                            const props = characteristic.properties;
-                            log(`Found characteristic: ${characteristic.uuid}`);
-                            log(`Properties: ${JSON.stringify(props)}`);
+                    // Focus on the specific characteristic for SpO2 (likely 0x6387)
+                    if (characteristic.uuid.includes('6387')) {
+                        if (props.notify) {
+                            await characteristic.startNotifications();
+                            log(`Started SpO2 notifications for ${characteristic.uuid}`);
 
-                            // Skip the heart rate characteristic to avoid confusion
-                            if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb') {
-                                continue;
-                            }
+                            characteristic.addEventListener('characteristicvaluechanged', (e) => {
+                                try {
+                                    const value = e.target.value;
+                                    const raw = new Uint8Array(value.buffer);
+                                    log(`Raw SpO2 data: [${Array.from(raw).join(', ')}]`);
 
-                            if (props.notify || props.indicate) {
-                                await characteristic.startNotifications();
-                                log(`Started notifications for ${characteristic.uuid}`);
-
-                                characteristic.addEventListener('characteristicvaluechanged', (e) => {
-                                    try {
-                                        const value = e.target.value;
-                                        const raw = new Uint8Array(value.buffer);
-                                        log(`SpO2 Raw data from ${characteristic.uuid}: [${Array.from(raw).join(', ')}]`);
-
-                                        // Try parsing SpO2 data
-                                        let spo2Value;
-
-                                        // Try different parsing methods based on the characteristic
-                                        if (characteristic.uuid.includes('6387') || characteristic.uuid.includes('6487')) {
-                                            // For proprietary service 6287
-                                            spo2Value = raw[0];
-                                        } else if (characteristic.uuid.includes('ffd')) {
-                                            // For proprietary service d0ff
-                                            if (raw.length >= 2) {
-                                                spo2Value = raw[1];
-                                            }
-                                        }
-
+                                    // Most SpO2 sensors use the second byte for the actual value
+                                    if (raw.length >= 2) {
+                                        const spo2Value = raw[1];
                                         if (isValidSpO2(spo2Value)) {
                                             updateSpO2Display(spo2Value);
-                                            log(`SpO2 value found: ${spo2Value}% from ${characteristic.uuid}`);
-                                        }
-                                    } catch (err) {
-                                        log(`Error parsing SpO2 data: ${err.message}`, true);
-                                    }
-                                });
-                            }
-
-                            // Try initial read if supported
-                            if (props.read) {
-                                try {
-                                    const value = await characteristic.readValue();
-                                    const raw = new Uint8Array(value.buffer);
-                                    
-                                    // Log initial values for debugging
-                                    if (raw.length > 0) {
-                                        log(`Initial SpO2 read from ${characteristic.uuid}: [${Array.from(raw).join(', ')}]`);
-                                        
-                                        // Try to parse initial value
-                                        let initialValue;
-                                        if (characteristic.uuid.includes('6387') || characteristic.uuid.includes('6487')) {
-                                            initialValue = raw[0];
-                                        } else if (characteristic.uuid.includes('ffd')) {
-                                            if (raw.length >= 2) {
-                                                initialValue = raw[1];
-                                            }
-                                        }
-
-                                        if (isValidSpO2(initialValue)) {
-                                            updateSpO2Display(initialValue);
-                                            log(`Initial SpO2 value found: ${initialValue}%`);
+                                            log(`SpO2 reading: ${spo2Value}%`);
                                         }
                                     }
-                                } catch (readErr) {
-                                    log(`Failed to read ${characteristic.uuid}: ${readErr.message}`, true);
+                                } catch (err) {
+                                    log(`Error parsing SpO2: ${err.message}`, true);
                                 }
+                            });
+                        }
+
+                        // Try to enable SpO2 measurements if write is supported
+                        if (props.write || props.writeWithoutResponse) {
+                            try {
+                                // Send command to enable continuous SpO2 monitoring
+                                const command = new Uint8Array([0x01]); // Example command - may need adjustment
+                                await characteristic.writeValue(command);
+                                log(`Enabled SpO2 monitoring`);
+                            } catch (writeErr) {
+                                log(`Failed to enable SpO2: ${writeErr.message}`, true);
                             }
                         }
-                    } catch (serviceErr) {
-                        log(`Error with service ${serviceUUID}: ${serviceErr.message}`, true);
                     }
                 }
             } catch (err) {
-                log(`Failed to investigate SpO2 services: ${err.message}`, true);
+                log(`SpO2 service error: ${err.message}`, true);
             }
         }
 
+        // Update validation to be more strict
         function isValidSpO2(value) {
-            return typeof value === 'number' && value >= 50 && value <= 100;
+            // SpO2 values are typically between 90 and 100
+            // Allow slightly wider range for edge cases
+            return typeof value === 'number' && value >= 85 && value <= 100;
         }
 
+        // Update display function to be more robust
         function updateSpO2Display(value) {
-            document.getElementById('spo2').textContent = value.toFixed(1);
-            spo2Values.push(Number(value));
-            if (spo2Values.length > 10) spo2Values.shift();
-            updateStats();
+            // Only update if we have a valid value
+            if (isValidSpO2(value)) {
+                document.getElementById('spo2').textContent = value.toFixed(1);
+                spo2Values.push(Number(value));
+                if (spo2Values.length > 10) spo2Values.shift();
+                updateStats();
+                log(`Updated SpO2 display: ${value}%`);
+            }
         }
 
         function log(message, isError = false) {
