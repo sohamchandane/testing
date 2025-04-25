@@ -87,7 +87,6 @@
             try {
                 log('Requesting device...');
                 const device = await navigator.bluetooth.requestDevice({
-                    filters: [{ services: [0x180D] }], // Filter for devices with Heart Rate Service
                     optionalServices: [
                         0x180D, // Heart Rate Service
                         0x1822, // Pulse Oximeter Service
