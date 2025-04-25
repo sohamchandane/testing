@@ -84,8 +84,8 @@
                 const device = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
                     optionalServices: [
-                        0x180D, // Heart Rate Service (short-form)
-                        0x1822, // Pulse Oximeter Service (short-form)
+                        // 0x180D, // Heart Rate Service (short-form)
+                        // 0x1822, // Pulse Oximeter Service (short-form)
                         "heart_rate",
                         '00006287-3c17-d293-8e48-14fe2e4da212', // Proprietary
                         '0000d0ff-3c17-d293-8e48-14fe2e4da212'  // Proprietary
