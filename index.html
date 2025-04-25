@@ -5,28 +5,85 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smartwatch Debugger</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        #data { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
-        #debug { background: #000; color: #0f0; padding: 15px; font-family: monospace; }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f2f2f2;
+            color: #333;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background: #007bff;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+        }
+
+        #data, #averages {
+            margin: 20px 0;
+            padding: 15px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        #data span, #averages span {
+            font-weight: bold;
+            color: #007bff;
+        }
+
+        #hrHistory {
+            margin-top: 10px;
+            font-size: 14px;
+        }
+
+        #debug {
+            background: #000;
+            color: #0f0;
+            padding: 15px;
+            font-family: monospace;
+            height: 200px;
+            overflow-y: auto;
+            border-radius: 8px;
+        }
     </style>
 </head>
 <body>
-    <button id="connect">Connect Device</button>
+    <button id="connect">Connect Smartwatch</button>
+
     <div id="data">
-        Heart Rate: <span id="hr">--</span> | 
-        SpO2: <span id="spo2">--</span>
+        <div>Heart Rate: <span id="hr">--</span> bpm</div>
+        <div>SpO2: <span id="spo2">--</span>%</div>
+        <div id="hrHistory">Recent Heart Rates: <span id="hrList">--</span></div>
     </div>
+
+    <div id="averages">
+        <div>Average Heart Rate: <span id="avgHr">--</span> bpm</div>
+        <div>Average SpO2: <span id="avgSpo2">--</span>%</div>
+    </div>
+
     <div id="debug"></div>
 
     <script>
         const debug = document.getElementById('debug');
-        let spo2Char = null;
+        let hrValues = [];
+        let spo2Values = [];
+
+        function updateStats() {
+            const avg = arr => arr.length ? (arr.reduce((a, b) => a + b) / arr.length).toFixed(1) : '--';
+            document.getElementById('hrList').textContent = hrValues.slice(-10).join(', ') || '--';
+            document.getElementById('avgHr').textContent = avg(hrValues);
+            document.getElementById('avgSpo2').textContent = avg(spo2Values);
+        }
 
         async function connectDevice() {
             try {
-                log('Starting connection...');
+                log('Requesting device...');
                 const device = await navigator.bluetooth.requestDevice({
-                    filters: [{ name: 'WAVESTYLE_55A0' }],
+                    acceptAllDevices: true,
                     optionalServices: [
                         '0000180d-0000-1000-8000-00805f9b34fb',
                         '00006287-3c17-d293-8e48-14fe2e4da212',
@@ -36,7 +93,7 @@
 
                 log(`Connected to: ${device.name}`);
                 const server = await device.gatt.connect();
-                
+
                 // Heart Rate
                 const hrService = await server.getPrimaryService('0000180d-0000-1000-8000-00805f9b34fb');
                 const hrChar = await hrService.getCharacteristic('00002a37-0000-1000-8000-00805f9b34fb');
@@ -44,10 +101,13 @@
                     const value = e.target.value;
                     const rate = value.getUint8(1);
                     document.getElementById('hr').textContent = rate;
+                    hrValues.push(rate);
+                    if (hrValues.length > 10) hrValues.shift();
+                    updateStats();
                 });
                 await hrChar.startNotifications();
 
-                // Deep SpO2 Investigation
+                // SpO2
                 await investigateSpo2(server);
 
             } catch (error) {
@@ -56,49 +116,41 @@
         }
 
         async function investigateSpo2(server) {
-            try {
-                // Check all potential SpO2 services
-                const services = [
-                    '00006287-3c17-d293-8e48-14fe2e4da212',
-                    '0000d0ff-3c17-d293-8e48-14fe2e4da212'
-                ];
+            const services = [
+                '00006287-3c17-d293-8e48-14fe2e4da212',
+                '0000d0ff-3c17-d293-8e48-14fe2e4da212'
+            ];
 
-                for (const serviceUUID of services) {
-                    try {
-                        const service = await server.getPrimaryService(serviceUUID);
-                        log(`Found service: ${serviceUUID}`);
-                        
-                        // Check all characteristics
-                        const characteristics = await service.getCharacteristics();
-                        characteristics.forEach(char => {
-                            log(`Characteristic: ${char.uuid} [${char.properties.join(', ')}]`);
-                            
-                            // Check for notify capability
-                            if (char.properties.includes('notify')) {
-                                log('Found potential SpO2 characteristic!');
-                                monitorCharacteristic(char);
-                            }
-                        });
-                    } catch (error) {
-                        log(`Service ${serviceUUID} error: ${error.message}`);
+            for (const serviceUUID of services) {
+                try {
+                    const service = await server.getPrimaryService(serviceUUID);
+                    log(`Found service: ${serviceUUID}`);
+                    const characteristics = await service.getCharacteristics();
+
+                    for (const char of characteristics) {
+                        const props = Object.keys(char.properties).filter(p => char.properties[p]);
+                        log(`Characteristic: ${char.uuid} [${props.join(', ')}]`);
+
+                        if (char.properties.notify) {
+                            await char.startNotifications();
+                            char.addEventListener('characteristicvaluechanged', e => {
+                                const raw = new Uint8Array(e.target.value.buffer);
+                                const firstVal = raw[0];
+                                log(`SpO2 Data from ${char.uuid}: ${raw}`);
+                                document.getElementById('spo2').textContent = firstVal;
+                                if (firstVal > 50 && firstVal < 101) {
+                                    spo2Values.push(firstVal);
+                                    if (spo2Values.length > 10) spo2Values.shift();
+                                    updateStats();
+                                }
+                            });
+                            log(`Monitoring SpO2 characteristic: ${char.uuid}`);
+                            return;
+                        }
                     }
+                } catch (err) {
+                    log(`Skipping ${serviceUUID}: ${err.message}`);
                 }
-            } catch (error) {
-                log(`SpO2 investigation failed: ${error.message}`, true);
-            }
-        }
-
-        async function monitorCharacteristic(char) {
-            try {
-                await char.startNotifications();
-                char.addEventListener('characteristicvaluechanged', e => {
-                    const raw = new Uint8Array(e.target.value.buffer);
-                    log(`DATA RECEIVED from ${char.uuid}: [${Array.from(raw)}]`);
-                    document.getElementById('spo2').textContent = `RAW: ${Array.from(raw)}`;
-                });
-                log(`Monitoring ${char.uuid} successfully`);
-            } catch (error) {
-                log(`Monitor failed for ${char.uuid}: ${error.message}`);
             }
         }
 
@@ -107,6 +159,7 @@
             line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
             line.style.color = isError ? '#f00' : '#0f0';
             debug.appendChild(line);
+            debug.scrollTop = debug.scrollHeight;
         }
 
         document.getElementById('connect').addEventListener('click', connectDevice);
