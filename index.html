@@ -118,59 +118,68 @@
 
         async function investigateSpo2(server) {
             try {
-                // Focus on service 0x6287 which is likely the SpO2 service
-                const service = await server.getPrimaryService('00006287-3c17-d293-8e48-14fe2e4da212');
-                log(`Connected to SpO2 service`);
-                
-                // Get all characteristics
-                const characteristics = await service.getCharacteristics();
-                
-                for (const characteristic of characteristics) {
-                    const props = characteristic.properties;
-                    log(`Found characteristic: ${characteristic.uuid}`);
-                    log(`Available properties: ${Object.keys(props).filter(k => props[k]).join(', ')}`);
+                // Focus on both potential SpO2 services
+                const services = [
+                    '00006287-3c17-d293-8e48-14fe2e4da212',
+                    '0000d0ff-3c17-d293-8e48-14fe2e4da212'
+                ];
 
-                    // Focus on the specific characteristic for SpO2 (likely 0x6387)
-                    if (characteristic.uuid.includes('6387')) {
-                        if (props.notify) {
-                            await characteristic.startNotifications();
-                            log(`Started SpO2 notifications for ${characteristic.uuid}`);
+                for (const serviceUUID of services) {
+                    try {
+                        const service = await server.getPrimaryService(serviceUUID);
+                        log(`Investigating service: ${serviceUUID}`);
+                        
+                        const characteristics = await service.getCharacteristics();
+                        log(`Found ${characteristics.length} characteristics`);
+                        
+                        for (const characteristic of characteristics) {
+                            const props = characteristic.properties;
+                            const availableProps = Object.entries(props)
+                                .filter(([_, v]) => v)
+                                .map(([k, _]) => k)
+                                .join(', ');
+                            
+                            log(`Characteristic ${characteristic.uuid}`);
+                            log(`Properties: ${availableProps}`);
 
-                            characteristic.addEventListener('characteristicvaluechanged', (e) => {
-                                try {
-                                    const value = e.target.value;
-                                    const raw = new Uint8Array(value.buffer);
-                                    log(`Raw SpO2 data: [${Array.from(raw).join(', ')}]`);
+                            // Only set up notifications, no writing to characteristics
+                            if (props.notify) {
+                                await characteristic.startNotifications();
+                                log(`Started notifications for ${characteristic.uuid}`);
 
-                                    // Most SpO2 sensors use the second byte for the actual value
-                                    if (raw.length >= 2) {
-                                        const spo2Value = raw[1];
+                                characteristic.addEventListener('characteristicvaluechanged', (e) => {
+                                    try {
+                                        const value = e.target.value;
+                                        const raw = new Uint8Array(value.buffer);
+                                        log(`Raw data from ${characteristic.uuid}: [${Array.from(raw).join(', ')}]`);
+
+                                        // Try different parsing methods without modifying the device
+                                        let spo2Value = null;
+                                        
+                                        // Only process data if it matches expected SpO2 patterns
+                                        if (raw.length >= 2) {
+                                            if (characteristic.uuid.includes('6387') || 
+                                                characteristic.uuid.includes('6487')) {
+                                                spo2Value = raw[1]; // Try second byte
+                                            }
+                                        }
+
                                         if (isValidSpO2(spo2Value)) {
                                             updateSpO2Display(spo2Value);
-                                            log(`SpO2 reading: ${spo2Value}%`);
+                                            log(`Valid SpO2 reading from ${characteristic.uuid}: ${spo2Value}%`);
                                         }
+                                    } catch (err) {
+                                        log(`Error processing data: ${err.message}`, true);
                                     }
-                                } catch (err) {
-                                    log(`Error parsing SpO2: ${err.message}`, true);
-                                }
-                            });
-                        }
-
-                        // Try to enable SpO2 measurements if write is supported
-                        if (props.write || props.writeWithoutResponse) {
-                            try {
-                                // Send command to enable continuous SpO2 monitoring
-                                const command = new Uint8Array([0x01]); // Example command - may need adjustment
-                                await characteristic.writeValue(command);
-                                log(`Enabled SpO2 monitoring`);
-                            } catch (writeErr) {
-                                log(`Failed to enable SpO2: ${writeErr.message}`, true);
+                                });
                             }
                         }
+                    } catch (serviceErr) {
+                        log(`Service ${serviceUUID} error: ${serviceErr.message}`);
                     }
                 }
             } catch (err) {
-                log(`SpO2 service error: ${err.message}`, true);
+                log(`SpO2 investigation error: ${err.message}`, true);
             }
         }
 
