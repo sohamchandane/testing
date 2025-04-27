@@ -105,6 +105,13 @@
         let spo2Values = [];
         let minHr = Infinity;
         let maxHr = -Infinity;
+        let emaHr = 0;
+        const alpha = 0.2; // Smoothing factor (0-1), higher means more weight to recent values
+
+        function calculateEMA(currentValue, previousEMA) {
+            if (previousEMA === 0) return currentValue; // Initial case
+            return alpha * currentValue + (1 - alpha) * previousEMA;
+        }
 
         function updateStats() {
             const avg = arr => arr.length ? (arr.reduce((a, b) => a + b) / arr.length).toFixed(1) : '--';
@@ -132,6 +139,13 @@
                 maxHr = Math.max(...hrValues);
                 document.getElementById('minHr').textContent = minHr;
                 document.getElementById('maxHr').textContent = maxHr;
+            }
+
+            // Update EMA for heart rate
+            if (hrValues.length > 0) {
+                const currentHr = hrValues[hrValues.length - 1];
+                emaHr = calculateEMA(currentHr, emaHr);
+                document.getElementById('avgHr').textContent = emaHr.toFixed(1);
             }
         }
 
@@ -162,6 +176,11 @@
                     document.getElementById('hr').textContent = rate;
                     hrValues.push(rate);
                     if (hrValues.length > 10) hrValues.shift();
+                    
+                    // Update EMA immediately when new heart rate arrives
+                    emaHr = calculateEMA(rate, emaHr);
+                    document.getElementById('avgHr').textContent = emaHr.toFixed(1);
+                    
                     updateStats();
                 });
                 await hrChar.startNotifications();
