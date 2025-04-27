@@ -58,6 +58,23 @@
             overflow-y: auto;
             border-radius: 8px;
         }
+
+        #minmax {
+            margin: 20px 0;
+            padding: 15px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        #minmax span {
+            font-weight: bold;
+            color: #007bff;
+        }
+
+        .recent {
+            color: #28a745 !important;
+        }
     </style>
 </head>
 <body>
@@ -74,18 +91,48 @@
         <div>Average SpO2: <span id="avgSpo2">--</span>%</div>
     </div>
 
+    <!-- Add this new div -->
+    <div id="minmax">
+        <div>Min Heart Rate: <span id="minHr">--</span> bpm</div>
+        <div>Max Heart Rate: <span id="maxHr">--</span> bpm</div>
+    </div>
+
     <div id="debug"></div>
 
     <script>
         const debug = document.getElementById('debug');
         let hrValues = [];
         let spo2Values = [];
+        let minHr = Infinity;
+        let maxHr = -Infinity;
 
         function updateStats() {
             const avg = arr => arr.length ? (arr.reduce((a, b) => a + b) / arr.length).toFixed(1) : '--';
-            document.getElementById('hrList').textContent = hrValues.slice(-10).join(', ') || '--';
+            
+            // Update heart rate list with highlighting for most recent
+            const recentHrValues = hrValues.slice(-10);
+            if (recentHrValues.length > 0) {
+                const hrListElement = document.getElementById('hrList');
+                hrListElement.innerHTML = recentHrValues.map((val, idx) => 
+                    idx === recentHrValues.length - 1 ? 
+                    `<span class="recent">${val}</span>` : 
+                    val
+                ).join(', ');
+            } else {
+                document.getElementById('hrList').textContent = '--';
+            }
+
+            // Update averages
             document.getElementById('avgHr').textContent = avg(hrValues);
             document.getElementById('avgSpo2').textContent = avg(spo2Values);
+
+            // Update min/max
+            if (hrValues.length > 0) {
+                minHr = Math.min(...hrValues);
+                maxHr = Math.max(...hrValues);
+                document.getElementById('minHr').textContent = minHr;
+                document.getElementById('maxHr').textContent = maxHr;
+            }
         }
 
         async function connectDevice() {
