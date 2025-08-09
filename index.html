@@ -12,7 +12,7 @@ async function connectDevice() {
   try {
     const device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
-      optionalServices: [] // We'll discover all
+      optionalServices: [] // Try to discover everything
     });
     log(`Selected device: ${device.name || device.id}`);
 
@@ -20,21 +20,46 @@ async function connectDevice() {
     log('Connected.');
 
     const services = await server.getPrimaryServices();
+    if (!services.length) {
+      log("⚠ No services found — device may be idle, require pairing, or not BLE.");
+      return;
+    }
     log(`Found ${services.length} services.`);
 
     for (const service of services) {
-      log(`Service: ${service.uuid}`);
+      log(`🔹 Service: ${service.uuid}`);
       const characteristics = await service.getCharacteristics();
+
       for (const char of characteristics) {
-        const props = Object.entries(char.properties).filter(([k,v])=>v).map(([k])=>k).join(',');
-        log(`  Char: ${char.uuid} props: ${props}`);
-        if (char.properties.notify) {
-          await char.startNotifications();
-          char.addEventListener('characteristicvaluechanged', (event) => {
-            const raw = new Uint8Array(event.target.value.buffer);
-            log(`  Notification from ${char.uuid}: [${Array.from(raw).join(', ')}]`);
-          });
-          log(`  Subscribed to ${char.uuid}`);
+        const props = Object.entries(char.properties)
+          .filter(([k, v]) => v)
+          .map(([k]) => k)
+          .join(',');
+        log(`  ➤ Char: ${char.uuid} props: ${props}`);
+
+        // Try reading if possible
+        if (char.properties.read) {
+          try {
+            const val = await char.readValue();
+            const raw = new Uint8Array(val.buffer);
+            log(`    📖 Read: [${Array.from(raw).join(', ')}]`);
+          } catch (err) {
+            log(`    ❌ Read failed: ${err.message}`);
+          }
+        }
+
+        // Subscribe if possible
+        if (char.properties.notify || char.properties.indicate) {
+          try {
+            await char.startNotifications();
+            char.addEventListener('characteristicvaluechanged', e => {
+              const raw = new Uint8Array(e.target.value.buffer);
+              log(`    🔔 Notify: [${Array.from(raw).join(', ')}]`);
+            });
+            log(`    ✅ Subscribed for notifications`);
+          } catch (err) {
+            log(`    ❌ Notify failed: ${err.message}`);
+          }
         }
       }
     }
