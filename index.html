@@ -3,458 +3,329 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BOAT LEAP CALL Heart Rate Monitor - Dynamic Service Discovery</title>
+    <title>Smartwatch Heart Rate Monitor</title>
+    <!-- Using Tailwind CSS for a modern look -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        /* Custom font and minor style adjustments */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
-            background: #f2f2f2;
-            color: #333;
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5;
         }
-
-        button {
-            padding: 12px 24px;
-            font-size: 16px;
-            cursor: pointer;
-            background: #007bff;
-            color: #fff;
-            border: none;
-            border-radius: 5px;
-            margin: 5px;
-        }
-
-        button:disabled {
-            background: #cccccc;
-            cursor: not-allowed;
-        }
-
-        .status-box {
-            margin: 20px 0;
-            padding: 15px;
-            background: #fff;
-            border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
-            border-left: 5px solid #007bff;
-        }
-
-        .status-box h3 {
-            margin-top: 0;
-            color: #007bff;
-        }
-
-        #data, #averages, #minmax {
-            margin: 20px 0;
-            padding: 15px;
-            background: #fff;
-            border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
-        }
-
-        #data span, #averages span, #minmax span {
-            font-weight: bold;
-            color: #007bff;
-        }
-
-        #hrHistory {
-            margin-top: 10px;
-            font-size: 14px;
-        }
-
+        /* Style for the debug log */
         #debug {
-            background: #000;
-            color: #0f0;
-            padding: 15px;
-            font-family: monospace;
-            height: 250px;
-            overflow-y: auto;
-            border-radius: 8px;
-            margin-top: 20px;
+            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+            font-size: 0.8rem;
+            line-height: 1.4;
         }
-
-        .recent {
-            color: #28a745 !important;
+        .recent-hr {
+            animation: highlight 1s ease-out;
         }
-
-        .error {
-            color: #dc3545;
-            background: #f8d7da;
-            border-color: #f5c6cb;
-        }
-
-        .success {
-            color: #155724;
-            background: #d4edda;
-            border-color: #c3e6cb;
-        }
-
-        .warning {
-            color: #721c24;
-            background: #f8d7da;
-            border-color: #f5c6cb;
-        }
-
-        .instructions {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
-            border-radius: 8px;
-            padding: 15px;
-            margin: 20px 0;
-        }
-
-        .step {
-            margin: 10px 0;
-            padding: 10px;
-            background: #f8f9fa;
-            border-left: 3px solid #28a745;
-            border-radius: 5px;
+        @keyframes highlight {
+            from { background-color: #4ade80; }
+            to { background-color: transparent; }
         }
     </style>
 </head>
-<body>
-    <h1>BOAT LEAP CALL Heart Rate Monitor</h1>
-    
-    <div class="instructions">
-        <h3>⚠️ IMPORTANT: Follow These Steps EXACTLY</h3>
-        <div class="step">
-            <strong>Step 1:</strong> On your BOAT LEAP CALL watch, go to <strong>Health → Heart Rate</strong> and start measuring
+<body class="antialiased text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-gray-900">Smartwatch Heart Rate Monitor</h1>
+            <p class="text-lg text-gray-600 mt-2">Connect your Bluetooth heart rate device.</p>
+        </header>
+
+        <!-- Main controls -->
+        <div class="bg-white p-6 rounded-2xl shadow-lg mb-6 text-center">
+            <button id="connectBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg text-lg transition-transform transform hover:scale-105">
+                Connect to Device
+            </button>
+            <p id="status" class="text-gray-500 mt-4 text-sm">Status: Disconnected</p>
         </div>
-        <div class="step">
-            <strong>Step 2:</strong> Keep the heart rate measurement <strong>actively running</strong> on the watch
+
+        <!-- Heart Rate Data Display -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            <div class="bg-white p-6 rounded-2xl shadow-lg text-center">
+                <p class="text-lg text-gray-500 mb-2">Current Heart Rate</p>
+                <p id="hrDisplay" class="text-6xl font-bold text-red-500">--</p>
+                <p class="text-lg text-gray-500">bpm</p>
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-lg text-center">
+                <p class="text-lg text-gray-500 mb-2">Min / Max</p>
+                <p class="text-4xl font-semibold"><span id="minHr">--</span> / <span id="maxHr">--</span></p>
+                <p class="text-lg text-gray-500 mt-2">Lowest / Highest</p>
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-lg text-center">
+                <p class="text-lg text-gray-500 mb-2">Smoothed Average</p>
+                <p id="avgHr" class="text-4xl font-semibold">--</p>
+                <p class="text-lg text-gray-500 mt-2">Recent Trend</p>
+            </div>
         </div>
-        <div class="step">
-            <strong>Step 3:</strong> While heart rate is measuring, click "Connect & Monitor" below
+        
+        <!-- Recent Readings -->
+        <div class="bg-white p-6 rounded-2xl shadow-lg mb-6">
+             <h3 class="font-semibold text-lg mb-2">Recent Readings</h3>
+             <p id="hrHistory" class="text-gray-600 text-lg">--</p>
         </div>
-        <div class="step">
-            <strong>Step 4:</strong> If connection fails, repeat the process keeping heart rate active longer
+
+        <!-- Debugging and Service Discovery -->
+        <div class="bg-white p-6 rounded-2xl shadow-lg">
+            <h3 class="font-semibold text-lg mb-3">Developer Log & Discovered Services</h3>
+            <p class="text-sm text-gray-600 mb-4">
+                If heart rate doesn't appear, connect your device and watch this log. It will show all data received from your watch. Look for a pattern in the numbers that matches your heart rate.
+            </p>
+            <div id="debug" class="bg-gray-900 text-green-400 p-4 rounded-lg h-64 overflow-y-auto">
+                [Ready] Waiting for connection...
+            </div>
         </div>
     </div>
-
-    <div class="status-box">
-        <h3>Connection Status</h3>
-        <div id="connectionStatus">Not Connected</div>
-        <div id="serviceStatus">No services discovered</div>
-        <div id="hrStatus">Heart rate service not found</div>
-    </div>
-
-    <button id="connectAndMonitor">Connect & Monitor Heart Rate</button>
-    <button id="reconnect" disabled>Reconnect</button>
-    <button id="forceDiscover" disabled>Force Rediscover Services</button>
-
-    <div id="data">
-        <div>Heart Rate: <span id="hr">--</span> bpm</div>
-        <div>SpO2: <span id="spo2">--</span>%</div>
-        <div id="hrHistory">Recent Heart Rates: <span id="hrList">--</span></div>
-    </div>
-
-    <div id="averages">
-        <div>Average Heart Rate: <span id="avgHr">--</span> bpm</div>
-        <div>Average SpO2: <span id="avgSpo2">--</span>%</div>
-    </div>
-
-    <div id="minmax">
-        <div>Min Heart Rate: <span id="minHr">--</span> bpm</div>
-        <div>Max Heart Rate: <span id="maxHr">--</span> bpm</div>
-    </div>
-
-    <div id="debug"></div>
 
     <script>
-        const debug = document.getElementById('debug');
+        // DOM Elements
+        const connectBtn = document.getElementById('connectBtn');
+        const statusEl = document.getElementById('status');
+        const hrDisplay = document.getElementById('hrDisplay');
+        const minHrEl = document.getElementById('minHr');
+        const maxHrEl = document.getElementById('maxHr');
+        const avgHrEl = document.getElementById('avgHr');
+        const hrHistoryEl = document.getElementById('hrHistory');
+        const debugLog = document.getElementById('debug');
+
+        // State variables
+        let bluetoothDevice = null;
+        let hrCharacteristic = null;
         let hrValues = [];
-        let spo2Values = [];
         let minHr = Infinity;
         let maxHr = -Infinity;
-        let emaHr = 0;
-        const alpha = 0.2;
-        let device = null;
-        let server = null;
-        let heartRateCharacteristic = null;
-        let monitoringActive = false;
+        let smoothedHr = 0; // Using an Exponential Moving Average (EMA)
 
-        function calculateEMA(currentValue, previousEMA) {
-            if (previousEMA === 0) return currentValue;
-            return alpha * currentValue + (1 - alpha) * previousEMA;
+        /**
+         * Logs messages to the debug console on the webpage.
+         * @param {string} message - The message to log.
+         * @param {string} type - 'info', 'error', 'success', 'data'.
+         */
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const colorMap = {
+                'info': 'text-gray-400',
+                'error': 'text-red-500 font-semibold',
+                'success': 'text-green-400 font-semibold',
+                'data': 'text-cyan-400'
+            };
+            debugLog.innerHTML += `<div class="${colorMap[type]}">[${timestamp}] ${message}</div>`;
+            debugLog.scrollTop = debugLog.scrollHeight;
         }
 
-        function updateStats() {
-            const avg = arr => arr.length ? (arr.reduce((a, b) => a + b) / arr.length).toFixed(1) : '--';
-            
-            const recentHrValues = hrValues.slice(-10);
-            if (recentHrValues.length > 0) {
-                const hrListElement = document.getElementById('hrList');
-                hrListElement.innerHTML = recentHrValues.map((val, idx) => 
-                    idx === recentHrValues.length - 1 ? 
-                    `<span class="recent">${val}</span>` : 
-                    val
-                ).join(', ');
-            } else {
-                document.getElementById('hrList').textContent = '--';
-            }
-
-            document.getElementById('avgSpo2').textContent = avg(spo2Values);
-
-            if (hrValues.length > 0) {
-                minHr = Math.min(...hrValues);
-                maxHr = Math.max(...hrValues);
-                document.getElementById('minHr').textContent = minHr;
-                document.getElementById('maxHr').textContent = maxHr;
-            }
-
-            if (hrValues.length > 0) {
-                const currentHr = hrValues[hrValues.length - 1];
-                emaHr = calculateEMA(currentHr, emaHr);
-                document.getElementById('avgHr').textContent = emaHr.toFixed(1);
-            }
-        }
-
-        function updateStatus(connection, services, hr) {
-            document.getElementById('connectionStatus').textContent = connection;
-            document.getElementById('serviceStatus').textContent = services;
-            document.getElementById('hrStatus').textContent = hr;
-        }
-
-        async function connectAndMonitor() {
+        /**
+         * Handles the connection process to the Bluetooth device.
+         */
+        connectBtn.addEventListener('click', async () => {
             try {
-                log('🔍 Starting connection to BOAT LEAP CALL...');
-                updateStatus('Connecting...', 'Waiting...', 'Waiting...');
-
-                // Request device with heart rate service specifically
-                device = await navigator.bluetooth.requestDevice({
-                    filters: [
-                        { namePrefix: 'LEAP' },
-                        { namePrefix: 'BOAT' },
-                        { services: ['heart_rate'] }
-                    ],
-                    acceptAllDevices: false,
+                log('Requesting Bluetooth device...');
+                statusEl.textContent = 'Status: Searching...';
+                
+                bluetoothDevice = await navigator.bluetooth.requestDevice({
+                    // Using acceptAllDevices is crucial for non-standard devices like many watches.
+                    acceptAllDevices: true,
+                    // We still list optionalServices to hint what we're looking for.
                     optionalServices: [
-                        'heart_rate',
-                        'battery_service',
-                        'device_information',
-                        'generic_access',
-                        'generic_attribute',
-                        '0000180d-0000-1000-8000-00805f9b34fb', // Heart Rate
-                        '0000180f-0000-1000-8000-00805f9b34fb', // Battery
-                        '0000180a-0000-1000-8000-00805f9b34fb', // Device Info
-                        '00001800-0000-1000-8000-00805f9b34fb', // Generic Access
-                        '00001801-0000-1000-8000-00805f9b34fb', // Generic Attribute
-                        '0000181c-0000-1000-8000-00805f9b34fb'  // User Data
+                        'heart_rate', // Standard Heart Rate Service
+                        '0000180d-0000-1000-8000-00805f9b34fb', // Full UUID for Heart Rate
+                        // Add other known proprietary service UUIDs here if you find them
+                        '0000fee0-0000-1000-8000-00805f9b34fb', // Common Xiaomi/Huami
                     ]
                 });
 
-                log(`✅ Connected to: ${device.name}`);
-                updateStatus(`Connected to ${device.name}`, 'Discovering services...', 'Searching...');
+                log(`Connecting to ${bluetoothDevice.name || 'Unnamed Device'}...`, 'success');
+                statusEl.textContent = `Status: Connecting to ${bluetoothDevice.name}...`;
+                
+                bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
+                
+                const server = await bluetoothDevice.gatt.connect();
+                log('GATT Server connected. Discovering services...', 'success');
+                statusEl.textContent = 'Status: Discovering Services...';
 
-                server = await device.gatt.connect();
-                log('✅ GATT server connected');
-
-                // Enable buttons
-                document.getElementById('reconnect').disabled = false;
-                document.getElementById('forceDiscover').disabled = false;
-
-                // Start heart rate monitoring
-                await findAndStartHeartRateMonitoring();
+                // This is the key part: find the heart rate service and characteristic
+                await findHeartRateService(server);
 
             } catch (error) {
-                log(`❌ Connection error: ${error.message}`, true);
-                updateStatus('Connection Failed', error.message, 'Not available');
-                
-                if (error.message.includes('User cancelled')) {
-                    log('💡 Tip: Make sure to select your BOAT LEAP CALL from the list', false);
-                } else if (error.message.includes('No Services')) {
-                    log('💡 Tip: Start heart rate measurement on your watch FIRST, then try connecting again', false);
-                }
+                log(`Connection failed: ${error}`, 'error');
+                statusEl.textContent = `Status: Error - ${error.message}`;
             }
+        });
+        
+        /**
+         * Cleans up when the device disconnects.
+         */
+        function onDisconnected() {
+            log('Device disconnected.', 'error');
+            statusEl.textContent = 'Status: Disconnected';
+            bluetoothDevice = null;
+            hrCharacteristic = null;
+            // Reset UI
+            hrDisplay.textContent = '--';
+            minHrEl.textContent = '--';
+            maxHrEl.textContent = '--';
+            avgHrEl.textContent = '--';
+            hrHistoryEl.textContent = '--';
         }
 
-        async function findAndStartHeartRateMonitoring() {
+        /**
+         * Searches for the heart rate service, starting with the standard one
+         * and then falling back to a broader search.
+         * @param {BluetoothRemoteGATTServer} server - The GATT server instance.
+         */
+        async function findHeartRateService(server) {
             try {
-                log('🔍 Discovering all available services...');
-                
-                // Get all services
-                const services = await server.getPrimaryServices();
-                log(`📋 Found ${services.length} services`);
-                updateStatus('Connected', `${services.length} services found`, 'Searching for heart rate...');
+                // First, try the standard heart rate service
+                log('Attempting to find standard Heart Rate service (180d)...');
+                const service = await server.getPrimaryService('heart_rate').catch(() => null);
 
-                // First try standard heart rate service
-                let heartRateService = null;
-                
-                for (const service of services) {
-                    log(`🔍 Service: ${service.uuid}`);
-                    
-                    if (service.uuid === '0000180d-0000-1000-8000-00805f9b34fb' || 
-                        service.uuid.includes('180d')) {
-                        heartRateService = service;
-                        log('🎯 Found heart rate service!');
-                        break;
-                    }
+                if (service) {
+                    log('Standard Heart Rate service found!', 'success');
+                    hrCharacteristic = await service.getCharacteristic('heart_rate_measurement');
+                    await startHrNotifications(hrCharacteristic);
+                    return;
                 }
 
-                if (heartRateService) {
-                    await setupHeartRateMonitoring(heartRateService);
-                } else {
-                    log('⚠️ Standard heart rate service not found. This means:');
-                    log('1. Heart rate is not actively measuring on the watch');
-                    log('2. Watch needs to be in heart rate measurement mode');
-                    log('3. Try starting heart rate on watch, then click "Force Rediscover"');
-                    updateStatus('Connected', 'Services found', 'Heart rate service not available');
-                    
-                    // Try alternative approach - look for any characteristics that might contain heart rate data
-                    await tryAlternativeHeartRateDetection(services);
-                }
-
-            } catch (error) {
-                log(`❌ Service discovery error: ${error.message}`, true);
-                updateStatus('Connected', 'Service discovery failed', 'Not available');
-            }
-        }
-
-        async function setupHeartRateMonitoring(heartRateService) {
-            try {
-                log('🔧 Setting up heart rate monitoring...');
-                const characteristics = await heartRateService.getCharacteristics();
+                // If standard service fails, search all services for a suitable characteristic
+                log('Standard service not found. Searching all services for notifying characteristics...');
+                statusEl.textContent = 'Status: Searching all services...';
                 
-                for (const characteristic of characteristics) {
-                    log(`📡 Characteristic: ${characteristic.uuid}`);
-                    
-                    if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb' || 
-                        characteristic.uuid.includes('2a37')) {
-                        
-                        heartRateCharacteristic = characteristic;
-                        
-                        characteristic.addEventListener('characteristicvaluechanged', handleHeartRateData);
-                        await characteristic.startNotifications();
-                        
-                        monitoringActive = true;
-                        log('🎉 Heart rate monitoring started successfully!');
-                        updateStatus('Connected & Monitoring', 'Heart rate service active', 'Receiving data');
-                        return;
-                    }
-                }
-                
-                log('❌ Heart rate measurement characteristic not found');
-                updateStatus('Connected', 'Heart rate service found', 'Measurement characteristic missing');
-                
-            } catch (error) {
-                log(`❌ Heart rate setup error: ${error.message}`, true);
-                updateStatus('Connected', 'Heart rate service found', 'Setup failed');
-            }
-        }
+                const allServices = await server.getPrimaryServices();
+                log(`Found ${allServices.length} services. Inspecting them...`);
 
-        async function tryAlternativeHeartRateDetection(services) {
-            log('🔍 Trying alternative heart rate detection...');
-            
-            for (const service of services) {
-                try {
+                for (const service of allServices) {
+                    log(`Inspecting Service: ${service.uuid}`);
                     const characteristics = await service.getCharacteristics();
                     
-                    for (const characteristic of characteristics) {
-                        if (characteristic.properties.notify) {
-                            log(`📡 Monitoring notify characteristic: ${characteristic.uuid} in service ${service.uuid}`);
-                            
-                            characteristic.addEventListener('characteristicvaluechanged', (event) => {
-                                handlePossibleHeartRateData(event, characteristic.uuid);
-                            });
-                            
-                            try {
-                                await characteristic.startNotifications();
-                                log(`✅ Notifications started for ${characteristic.uuid}`);
-                            } catch (notifyError) {
-                                log(`⚠️ Could not start notifications for ${characteristic.uuid}: ${notifyError.message}`);
-                            }
+                    for (const char of characteristics) {
+                        // We are looking for any characteristic that can send notifications
+                        if (char.properties.notify) {
+                            log(`Found NOTIFY characteristic: ${char.uuid}. Subscribing for data...`);
+                            // We will start listening to ALL notifying characteristics.
+                            // The handleHeartRateData function will figure out which one is correct.
+                            await startHrNotifications(char);
                         }
                     }
-                } catch (serviceError) {
-                    log(`⚠️ Could not access service ${service.uuid}: ${serviceError.message}`);
                 }
+                log('Finished searching all services. Waiting for data...');
+                statusEl.textContent = 'Status: Connected & Listening';
+
+            } catch (error) {
+                log(`Error finding service: ${error}`, 'error');
+                statusEl.textContent = `Status: Error - ${error.message}`;
             }
         }
 
+        /**
+         * Starts notifications for a given characteristic and attaches the event listener.
+         * @param {BluetoothRemoteGATTCharacteristic} characteristic
+         */
+        async function startHrNotifications(characteristic) {
+            try {
+                characteristic.addEventListener('characteristicvaluechanged', handleHeartRateData);
+                await characteristic.startNotifications();
+                log(`Started listening to notifications from ${characteristic.uuid}`, 'success');
+            } catch (error) {
+                log(`Failed to start notifications on ${characteristic.uuid}: ${error.message}`, 'error');
+            }
+        }
+
+        /**
+         * This function is called every time the watch sends data.
+         * It tries to parse the heart rate from the raw data.
+         * @param {Event} event - The event object from the characteristic.
+         */
         function handleHeartRateData(event) {
-            const value = event.target.value;
-            const raw = new Uint8Array(value.buffer);
+            const characteristic = event.target;
+            const value = characteristic.value;
+            const rawData = new Uint8Array(value.buffer);
             
-            log(`📊 Heart rate data: [${Array.from(raw).join(', ')}]`);
-            
-            // Standard Bluetooth heart rate format
-            const flags = raw[0];
-            const is16Bit = flags & 0x01;
-            const heartRate = is16Bit ? value.getUint16(1, true) : raw[1];
-            
-            if (heartRate >= 40 && heartRate <= 220) {
-                updateHeartRateDisplay(heartRate);
-                log(`💗 Heart rate: ${heartRate} bpm`);
-            } else {
-                log(`⚠️ Invalid heart rate value: ${heartRate}`);
+            // Log the raw data from the specific characteristic - THIS IS CRUCIAL FOR DEBUGGING
+            log(`Data from [${characteristic.uuid}]: [${rawData.join(', ')}]`, 'data');
+
+            let heartRate = parseHeartRate(value);
+
+            if (heartRate !== null) {
+                // We found a valid heart rate! This is likely the correct characteristic.
+                log(`Successfully parsed Heart Rate: ${heartRate} bpm`, 'success');
+                
+                // Update UI elements
+                hrDisplay.textContent = heartRate;
+                hrDisplay.classList.add('recent-hr');
+                hrDisplay.addEventListener('animationend', () => {
+                    hrDisplay.classList.remove('recent-hr');
+                }, { once: true });
+
+
+                // Update stats
+                hrValues.push(heartRate);
+                if (hrValues.length > 20) {
+                    hrValues.shift(); // Keep the last 20 readings
+                }
+
+                minHr = Math.min(...hrValues);
+                maxHr = Math.max(...hrValues);
+
+                // Calculate Exponential Moving Average for a smoother average
+                if (smoothedHr === 0) {
+                    smoothedHr = heartRate;
+                } else {
+                    smoothedHr = (heartRate * 0.2) + (smoothedHr * 0.8);
+                }
+
+                minHrEl.textContent = minHr;
+                maxHrEl.textContent = maxHr;
+                avgHrEl.textContent = smoothedHr.toFixed(1);
+                hrHistoryEl.textContent = hrValues.slice(-10).join(', ');
             }
         }
+        
+        /**
+         * Tries various methods to parse the heart rate from a DataView object.
+         * @param {DataView} value - The data from the Bluetooth characteristic.
+         * @returns {number|null} The parsed heart rate or null if not found.
+         */
+        function parseHeartRate(value) {
+            const flags = value.getUint8(0);
+            const is16BitFormat = flags & 0x01;
+            const rawData = new Uint8Array(value.buffer);
 
-        function handlePossibleHeartRateData(event, charUuid) {
-            const value = event.target.value;
-            const raw = new Uint8Array(value.buffer);
-            
-            log(`📡 Data from ${charUuid}: [${Array.from(raw).join(', ')}]`);
-            
-            // Look for potential heart rate values
-            for (let i = 0; i < raw.length; i++) {
-                const testValue = raw[i];
-                if (testValue >= 40 && testValue <= 220) {
-                    log(`🤔 Possible heart rate at byte ${i}: ${testValue}`);
-                    updateHeartRateDisplay(testValue);
-                    break;
+            // Standard Bluetooth Heart Rate Profile
+            if (is16BitFormat) {
+                // 16-bit heart rate value
+                return value.getUint16(1, true); // true for little-endian
+            } else {
+                // 8-bit heart rate value
+                let hr = value.getUint8(1);
+                if (hr > 40 && hr < 220) return hr; // Basic validation
+            }
+
+            // --- Fallback for Proprietary Formats ---
+            // Many devices (like Mi Bands, etc.) send HR in the second byte of a longer array.
+            if (rawData.length > 1) {
+                let hr = rawData[1];
+                if (hr > 40 && hr < 220) {
+                    log(`(Fallback) Found potential HR at byte 1: ${hr}`);
+                    return hr;
                 }
             }
-        }
-
-        function updateHeartRateDisplay(heartRate) {
-            document.getElementById('hr').textContent = heartRate;
-            hrValues.push(heartRate);
-            if (hrValues.length > 10) hrValues.shift();
             
-            emaHr = calculateEMA(heartRate, emaHr);
-            document.getElementById('avgHr').textContent = emaHr.toFixed(1);
-            
-            updateStats();
-            
-            if (!monitoringActive) {
-                updateStatus('Connected & Receiving', 'Alternative method active', 'Data flowing');
-                monitoringActive = true;
+            // Another common pattern is the third byte
+            if (rawData.length > 2) {
+                let hr = rawData[2];
+                if (hr > 40 && hr < 220) {
+                    log(`(Fallback) Found potential HR at byte 2: ${hr}`);
+                    return hr;
+                }
             }
+
+            // If all else fails, return null
+            return null;
         }
 
-        async function reconnect() {
-            if (device && device.gatt.connected) {
-                device.gatt.disconnect();
-            }
-            await connectAndMonitor();
-        }
-
-        async function forceRediscover() {
-            if (server) {
-                log('🔄 Force rediscovering services...');
-                await findAndStartHeartRateMonitoring();
-            } else {
-                log('❌ Not connected to device');
-            }
-        }
-
-        function log(message, isError = false) {
-            const line = document.createElement('div');
-            const timestamp = new Date().toLocaleTimeString();
-            line.textContent = `[${timestamp}] ${message}`;
-            line.style.color = isError ? '#f00' : '#0f0';
-            debug.appendChild(line);
-            debug.scrollTop = debug.scrollHeight;
-        }
-
-        // Event listeners
-        document.getElementById('connectAndMonitor').addEventListener('click', connectAndMonitor);
-        document.getElementById('reconnect').addEventListener('click', reconnect);
-        document.getElementById('forceDiscover').addEventListener('click', forceRediscover);
-
-        // Handle device disconnection
-        document.addEventListener('DOMContentLoaded', () => {
-            log('🚀 App loaded. Make sure heart rate is measuring on your watch!');
-        });
     </script>
 </body>
 </html>
