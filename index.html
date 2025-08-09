@@ -1,180 +1,47 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Smartwatch Debugger</title>
-<style>
-  body { font-family: Arial, sans-serif; margin:20px; background:#f2f2f2; color:#333; }
-  button { padding:10px 20px; font-size:16px; cursor:pointer; background:#007bff; color:#fff; border:none; border-radius:5px;}
-  #data,#averages,#minmax { margin:20px 0; padding:15px; background:#fff; border-radius:8px; box-shadow:0 0 10px rgba(0,0,0,0.1); }
-  #debug { background:#000; color:#0f0; padding:15px; font-family:monospace; height:220px; overflow:auto; border-radius:8px; }
-  .recent { color:#28a745 !important; }
-</style>
-</head>
-<body>
-  <button id="connect">Connect Smartwatch</button>
-
-  <div id="data">
-    <div>Heart Rate: <span id="hr">--</span> bpm</div>
-    <div>SpO₂: <span id="spo2">--</span>%</div>
-    <div id="hrHistory">Recent Heart Rates: <span id="hrList">--</span></div>
-  </div>
-
-  <div id="averages">
-    <div>Average Heart Rate: <span id="avgHr">--</span> bpm</div>
-    <div>EMA Heart Rate: <span id="emaHr">--</span> bpm</div>
-    <div>Average SpO₂: <span id="avgSpo2">--</span>%</div>
-  </div>
-
-  <div id="minmax">
-    <div>Min Heart Rate: <span id="minHr">--</span> bpm</div>
-    <div>Max Heart Rate: <span id="maxHr">--</span> bpm</div>
-  </div>
-
-  <div id="debug"></div>
+<button id="connect">Connect Smartwatch</button>
+<pre id="log"></pre>
 
 <script>
-const debug = document.getElementById('debug');
-const SPO2_SERVICE_UUIDS = [
-  0x1822,
-  '00006287-3c17-d293-8e48-14fe2e4da212',
-  '0000d0ff-3c17-d293-8e48-14fe2e4da212',
-  '0000aaa0-0000-1000-8000-aabbccddeeff'
-];
-
-let hrValues = [], spo2Values = [];
-let minHr = Infinity, maxHr = -Infinity, emaHr = 0;
-const alpha = 0.2;
-
-function log(msg, isError=false){
-  const line = document.createElement('div');
-  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-  line.style.color = isError ? '#f00' : '#0f0';
-  debug.appendChild(line);
-  debug.scrollTop = debug.scrollHeight;
+const logEl = document.getElementById('log');
+function log(msg) {
+  logEl.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
 }
 
-function calculateEMA(currentValue, previousEMA) {
-  return previousEMA === 0 ? currentValue : alpha * currentValue + (1 - alpha) * previousEMA;
-}
-function avg(arr) { return arr.length ? (arr.reduce((a,b)=>a+b)/arr.length).toFixed(1) : '--'; }
-function updateStats(){
-  const recent = hrValues.slice(-10);
-  document.getElementById('hrList').innerHTML = recent.length ? recent.map((v,i)=> i===recent.length-1 ? `<span class="recent">${v}</span>` : v).join(', ') : '--';
-  document.getElementById('avgHr').textContent = avg(hrValues);
-  document.getElementById('emaHr').textContent = emaHr ? emaHr.toFixed(1) : '--';
-  document.getElementById('avgSpo2').textContent = avg(spo2Values);
-  if(hrValues.length){ minHr = Math.min(...hrValues); maxHr = Math.max(...hrValues); document.getElementById('minHr').textContent = minHr; document.getElementById('maxHr').textContent = maxHr; }
-}
-
-async function connectDevice(){
+async function connectDevice() {
   try {
     const device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
-      optionalServices: [0x180D, ...SPO2_SERVICE_UUIDS]
+      optionalServices: [] // We'll discover all
     });
     log(`Selected device: ${device.name || device.id}`);
+
     const server = await device.gatt.connect();
-    log('GATT connected');
+    log('Connected.');
 
-    // --- Heart Rate: discover and subscribe properly, parse flags per spec ---
-    try {
-      const hrService = await server.getPrimaryService(0x180D);
-      const hrChar = await hrService.getCharacteristic(0x2A37);
-      // Attempt to write to Heart Rate Control Point (0x2A39) if present and writable (best-effort)
-      try {
-        const control = await hrService.getCharacteristic(0x2A39);
-        if (control && control.properties && (control.properties.write || control.properties.writeWithoutResponse)) {
-          log('Control point (0x2A39) is writable — attempting write (opcode 0x01 = Reset Energy Expended - vendor-specific behavior may vary)');
-          try {
-            await control.writeValue(new Uint8Array([0x01])); // standard opcode for Reset Energy Expended
-            log('Write to 0x2A39 succeeded (device-specific behaviour).');
-          } catch (wErr) {
-            log(`Write to 0x2A39 failed: ${wErr.message}`, true);
-          }
-        } else {
-          log('Control point (0x2A39) not writable or not present.');
+    const services = await server.getPrimaryServices();
+    log(`Found ${services.length} services.`);
+
+    for (const service of services) {
+      log(`Service: ${service.uuid}`);
+      const characteristics = await service.getCharacteristics();
+      for (const char of characteristics) {
+        const props = Object.entries(char.properties).filter(([k,v])=>v).map(([k])=>k).join(',');
+        log(`  Char: ${char.uuid} props: ${props}`);
+        if (char.properties.notify) {
+          await char.startNotifications();
+          char.addEventListener('characteristicvaluechanged', (event) => {
+            const raw = new Uint8Array(event.target.value.buffer);
+            log(`  Notification from ${char.uuid}: [${Array.from(raw).join(', ')}]`);
+          });
+          log(`  Subscribed to ${char.uuid}`);
         }
-      } catch (cErr) {
-        log('No control point (0x2A39) found or error reading it.');
-      }
-
-      // Subscribe to notifications and parse according to BLE spec
-      hrChar.addEventListener('characteristicvaluechanged', (e) => {
-        try {
-          const dv = e.target.value;
-          const flags = dv.getUint8(0);
-          const hr16 = (flags & 0x01) !== 0; // bit 0 = 1 => Heart Rate is UINT16 else UINT8
-          let hr;
-          if (hr16) hr = dv.getUint16(1, /*littleEndian=*/true);
-          else hr = dv.getUint8(1);
-
-          document.getElementById('hr').textContent = hr;
-          hrValues.push(hr);
-          if (hrValues.length > 200) hrValues.shift();
-          emaHr = calculateEMA(hr, emaHr);
-          updateStats();
-
-          // log raw bytes for debugging
-          const raw = new Uint8Array(dv.buffer);
-          log(`HR notification raw [${Array.from(raw).join(', ')}] parsed HR=${hr}`);
-        } catch (err) {
-          log(`Error parsing HR notification: ${err.message}`, true);
-        }
-      });
-      await hrChar.startNotifications();
-      log('Subscribed to Heart Rate notifications (0x2A37).');
-    } catch (err) {
-      log(`Heart Rate service/char error: ${err.message}`, true);
-    }
-
-    // --- Attempt to discover possible SpO2 services and subscribe to all characteristics we find ---
-    for (const svc of SPO2_SERVICE_UUIDS) {
-      try {
-        const service = await server.getPrimaryService(svc);
-        log(`Found service ${svc}`);
-        const chars = await service.getCharacteristics();
-        log(`Service ${svc} has ${chars.length} chars`);
-        for (const char of chars) {
-          const props = Object.entries(char.properties).filter(([k,v])=>v).map(([k])=>k).join(',');
-          log(`Char ${char.uuid} props: ${props}`);
-          if (char.properties.notify) {
-            await char.startNotifications();
-            char.addEventListener('characteristicvaluechanged', (e) => {
-              try {
-                const raw = new Uint8Array(e.target.value.buffer);
-                log(`SpO2 candidate raw from ${char.uuid}: [${Array.from(raw).join(', ')}]`);
-                // Try simple heuristics: check bytes 0..3 for plausible 85..100 range
-                let candidate = null;
-                for (let i=0;i<raw.length;i++){
-                  if (raw[i] >= 85 && raw[i] <= 100) { candidate = raw[i]; break; }
-                }
-                if (candidate !== null) {
-                  document.getElementById('spo2').textContent = candidate;
-                  spo2Values.push(candidate);
-                  if (spo2Values.length > 200) spo2Values.shift();
-                  updateStats();
-                  log(`Parsed SpO2 candidate=${candidate}% from ${char.uuid}`);
-                }
-              } catch (err) {
-                log(`Error processing SpO2 notification: ${err.message}`, true);
-              }
-            });
-            log(`Started notifications on ${char.uuid}`);
-          }
-        }
-      } catch (err) {
-        log(`Service ${svc} not present or error: ${err.message}`);
       }
     }
-
   } catch (err) {
-    log(`Connection error: ${err.message}`, true);
+    log(`Error: ${err.message}`);
   }
 }
 
 document.getElementById('connect').addEventListener('click', connectDevice);
 </script>
-</body>
-</html>
