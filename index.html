@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smartwatch Debugger</title>
+    <title>BOAT LEAP CALL Heart Rate Monitor</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -31,7 +31,7 @@
             margin-left: 10px;
         }
 
-        #data, #averages {
+        #data, #averages, #minmax, #services {
             margin: 20px 0;
             padding: 15px;
             background: #fff;
@@ -39,7 +39,7 @@
             box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }
 
-        #data span, #averages span {
+        #data span, #averages span, #minmax span {
             font-weight: bold;
             color: #007bff;
         }
@@ -54,31 +54,29 @@
             color: #0f0;
             padding: 15px;
             font-family: monospace;
-            height: 200px;
+            height: 300px;
             overflow-y: auto;
             border-radius: 8px;
-        }
-
-        #minmax {
-            margin: 20px 0;
-            padding: 15px;
-            background: #fff;
-            border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
-        }
-
-        #minmax span {
-            font-weight: bold;
-            color: #007bff;
         }
 
         .recent {
             color: #28a745 !important;
         }
+
+        .service-item {
+            margin: 5px 0;
+            padding: 5px;
+            background: #f8f9fa;
+            border-left: 3px solid #007bff;
+            font-family: monospace;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
-    <button id="connect">Connect Smartwatch</button>
+    <button id="connect">Connect BOAT LEAP CALL</button>
+    <button id="discover">Discover All Services</button>
+    <button id="startHR">Start Heart Rate</button>
 
     <div id="data">
         <div>Heart Rate: <span id="hr">--</span> bpm</div>
@@ -96,6 +94,11 @@
         <div>Max Heart Rate: <span id="maxHr">--</span> bpm</div>
     </div>
 
+    <div id="services">
+        <h3>Discovered Services & Characteristics:</h3>
+        <div id="servicesList"></div>
+    </div>
+
     <div id="debug"></div>
 
     <script>
@@ -105,17 +108,18 @@
         let minHr = Infinity;
         let maxHr = -Infinity;
         let emaHr = 0;
-        const alpha = 0.2; // Smoothing factor (0-1), higher means more weight to recent values
+        const alpha = 0.2;
+        let device = null;
+        let server = null;
 
         function calculateEMA(currentValue, previousEMA) {
-            if (previousEMA === 0) return currentValue; // Initial case
+            if (previousEMA === 0) return currentValue;
             return alpha * currentValue + (1 - alpha) * previousEMA;
         }
 
         function updateStats() {
             const avg = arr => arr.length ? (arr.reduce((a, b) => a + b) / arr.length).toFixed(1) : '--';
             
-            // Update heart rate list with highlighting for most recent
             const recentHrValues = hrValues.slice(-10);
             if (recentHrValues.length > 0) {
                 const hrListElement = document.getElementById('hrList');
@@ -128,10 +132,8 @@
                 document.getElementById('hrList').textContent = '--';
             }
 
-            // Update averages
             document.getElementById('avgSpo2').textContent = avg(spo2Values);
 
-            // Update min/max
             if (hrValues.length > 0) {
                 minHr = Math.min(...hrValues);
                 maxHr = Math.max(...hrValues);
@@ -139,7 +141,6 @@
                 document.getElementById('maxHr').textContent = maxHr;
             }
 
-            // Update EMA for heart rate
             if (hrValues.length > 0) {
                 const currentHr = hrValues[hrValues.length - 1];
                 emaHr = calculateEMA(currentHr, emaHr);
@@ -149,151 +150,231 @@
 
         async function connectDevice() {
             try {
-                const device = await navigator.bluetooth.requestDevice({
+                device = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
                     optionalServices: [
-                        // Standard Heart Rate Services
+                        // Standard services
                         'heart_rate',
-                        0x180D,
-                        '0000180d-0000-1000-8000-00805f9b34fb',
-                        
-                        // Generic Services
-                        'generic_access',
-                        'device_information',
                         'battery_service',
+                        'device_information',
+                        'generic_access',
+                        'generic_attribute',
                         
-                        // Common proprietary services
-                        // '0000fee0-0000-1000-8000-00805f9b34fb', // Xiaomi Mi Band
-                        // '6E400001-B5A3-F393-E0A9-E50E24DCCA9E', // Nordic UART
-                        // 'adabfb00-6e7d-4601-bda2-bffaa68956ba', // Fitbit-style
+                        // All possible UUID formats for heart rate
+                        '0000180d-0000-1000-8000-00805f9b34fb',
+                        '180d',
+                        0x180D,
                         
-                        // Add more as needed
-                        '00006287-3c17-d293-8e48-14fe2e4da212', // From your screenshot
-                        '0000d0ff-3c17-d293-8e48-14fe2e4da212'  // From your screenshot
+                        // From your screenshot - BOAT LEAP CALL specific
+                        '00001801-0000-1000-8000-00805f9b34fb', // Generic Attribute
+                        '00001800-0000-1000-8000-00805f9b34fb', // Generic Access
+                        '0000180f-0000-1000-8000-00805f9b34fb', // Battery Service
+                        
+                        // Unknown service from screenshot
+                        '0000aaa0-0000-1000-8000-aabbccddeeff',
+                        
+                        // User Data service
+                        '0000181c-0000-1000-8000-00805f9b34fb',
+                        
+                        // Common proprietary services that might contain HR
+                        '0000fee0-0000-1000-8000-00805f9b34fb',
+                        '6E400001-B5A3-F393-E0A9-E50E24DCCA9E',
+                        'adabfb00-6e7d-4601-bda2-bffaa68956ba'
                     ]
                 });
 
                 log(`Connected to: ${device.name}`);
-                const server = await device.gatt.connect();
-
-                // Try all possible heart rate service UUIDs
-                const heartRateServices = [
-                    'heart_rate',
-                    '0000180d-0000-1000-8000-00805f9b34fb',
-                    '00006287-3c17-d293-8e48-14fe2e4da212',
-                    '0000d0ff-3c17-d293-8e48-14fe2e4da212'
-                ];
-
-                const heartRateCharacteristics = [
-                    'heart_rate_measurement',
-                    '00002a37-0000-1000-8000-00805f9b34fb',
-                    '0x2A37'
-                ];
-
-                for (const serviceUUID of heartRateServices) {
-                    try {
-                        const hrService = await server.getPrimaryService(serviceUUID);
-                        log(`Found heart rate service: ${serviceUUID}`);
-
-                        for (const charUUID of heartRateCharacteristics) {
-                            try {
-                                const hrChar = await hrService.getCharacteristic(charUUID);
-                                log(`Found heart rate characteristic: ${charUUID}`);
-
-                                hrChar.addEventListener('characteristicvaluechanged', (e) => {
-                                    const value = e.target.value;
-                                    let flags = value.getUint8(0);
-                                    let rate16Bits = flags & 0x01;
-                                    let bpm = rate16Bits ? value.getUint16(1, true) : value.getUint8(1);
-
-                                    document.getElementById('hr').textContent = bpm;
-                                    hrValues.push(bpm);
-                                    if (hrValues.length > 10) hrValues.shift();
-
-                                    emaHr = calculateEMA(bpm, emaHr);
-                                    document.getElementById('avgHr').textContent = emaHr.toFixed(1);
-
-                                    updateStats();
-                                    log(`HR: ${bpm} bpm`);
-                                });
-
-                                await hrChar.startNotifications();
-                                log('Heart rate notifications started successfully!');
-                                return; // Exit if successful
-                            } catch (charError) {
-                                log(`Characteristic ${charUUID} not found: ${charError.message}`);
-                            }
-                        }
-                    } catch (serviceError) {
-                        log(`Service ${serviceUUID} not found: ${serviceError.message}`);
-                    }
-                }
-
-                log('No heart rate service found with any known UUID', true);
+                server = await device.gatt.connect();
+                log('GATT server connected successfully');
+                
+                // Enable buttons
+                document.getElementById('discover').disabled = false;
+                document.getElementById('startHR').disabled = false;
 
             } catch (error) {
                 log(`Connection error: ${error.message}`, true);
             }
         }
 
+        async function discoverAllServices() {
+            if (!server) {
+                log('Not connected to device', true);
+                return;
+            }
 
-        async function investigateSpo2(server) {
             try {
-                // Try the unknown service from screenshot
-                const services = [
-                    '0000aaaa-0000-1000-8000-aabbccddeeff'
-                ];
+                log('Starting service discovery...');
+                const services = await server.getPrimaryServices();
+                log(`Found ${services.length} services`);
+                
+                const servicesList = document.getElementById('servicesList');
+                servicesList.innerHTML = '';
 
-                for (const serviceUUID of services) {
+                for (const service of services) {
+                    log(`Service: ${service.uuid}`);
+                    
+                    const serviceDiv = document.createElement('div');
+                    serviceDiv.className = 'service-item';
+                    serviceDiv.innerHTML = `<strong>Service:</strong> ${service.uuid}`;
+                    servicesList.appendChild(serviceDiv);
+
                     try {
-                        const service = await server.getPrimaryService(serviceUUID);
-                        log(`Investigating service: ${serviceUUID}`);
-                        
                         const characteristics = await service.getCharacteristics();
-                        log(`Found ${characteristics.length} characteristics`);
+                        log(`  ${characteristics.length} characteristics found`);
                         
                         for (const characteristic of characteristics) {
-                            const props = characteristic.properties;
-                            const availableProps = Object.entries(props)
-                                .filter(([_, v]) => v)
-                                .map(([k, _]) => k)
-                                .join(', ');
+                            const properties = [];
+                            if (characteristic.properties.read) properties.push('READ');
+                            if (characteristic.properties.write) properties.push('WRITE');
+                            if (characteristic.properties.writeWithoutResponse) properties.push('WRITE_NO_RESPONSE');
+                            if (characteristic.properties.notify) properties.push('NOTIFY');
+                            if (characteristic.properties.indicate) properties.push('INDICATE');
                             
-                            log(`Characteristic ${characteristic.uuid}`);
-                            log(`Properties: ${availableProps}`);
-
-                            if (props.notify) {
-                                await characteristic.startNotifications();
-                                log(`Started notifications for ${characteristic.uuid}`);
-
-                                characteristic.addEventListener('characteristicvaluechanged', (e) => {
-                                    try {
-                                        const value = e.target.value;
-                                        const raw = new Uint8Array(value.buffer);
-                                        log(`Raw data from ${characteristic.uuid}: [${Array.from(raw).join(', ')}]`);
-
-                                        // Attempt to parse possible SpO2 (assuming second byte or similar)
-                                        let spo2Value = null;
-                                        if (raw.length >= 2) {
-                                            spo2Value = raw[1];
-                                        }
-
-                                        if (isValidSpO2(spo2Value)) {
-                                            updateSpO2Display(spo2Value);
-                                            log(`Valid SpO2 reading from ${characteristic.uuid}: ${spo2Value}%`);
-                                        }
-                                    } catch (err) {
-                                        log(`Error processing data: ${err.message}`, true);
-                                    }
-                                });
+                            log(`    Char: ${characteristic.uuid} [${properties.join(', ')}]`);
+                            
+                            const charDiv = document.createElement('div');
+                            charDiv.className = 'service-item';
+                            charDiv.style.marginLeft = '20px';
+                            charDiv.innerHTML = `<strong>Characteristic:</strong> ${characteristic.uuid}<br><strong>Properties:</strong> ${properties.join(', ')}`;
+                            servicesList.appendChild(charDiv);
+                            
+                            // Try to identify potential heart rate characteristics
+                            if (characteristic.uuid.includes('2a37') || 
+                                characteristic.properties.notify && 
+                                (characteristic.uuid.includes('180d') || service.uuid.includes('180d'))) {
+                                log(`  *** POTENTIAL HEART RATE CHARACTERISTIC: ${characteristic.uuid} ***`);
                             }
                         }
-                    } catch (serviceErr) {
-                        log(`Service ${serviceUUID} error: ${serviceErr.message}`);
+                    } catch (charError) {
+                        log(`    Error reading characteristics: ${charError.message}`, true);
                     }
                 }
-            } catch (err) {
-                log(`SpO2 investigation error: ${err.message}`, true);
+                
+            } catch (error) {
+                log(`Service discovery error: ${error.message}`, true);
+            }
+        }
+
+        async function startHeartRateMonitoring() {
+            if (!server) {
+                log('Not connected to device', true);
+                return;
+            }
+
+            try {
+                log('Attempting to find heart rate service...');
+                
+                // First try to find the standard heart rate service
+                const services = await server.getPrimaryServices();
+                
+                for (const service of services) {
+                    log(`Checking service: ${service.uuid}`);
+                    
+                    // Check if this could be a heart rate service
+                    if (service.uuid.includes('180d') || 
+                        service.uuid.includes('fee0') ||
+                        service.uuid === '0000180d-0000-1000-8000-00805f9b34fb') {
+                        
+                        log(`Found potential HR service: ${service.uuid}`);
+                        
+                        try {
+                            const characteristics = await service.getCharacteristics();
+                            
+                            for (const characteristic of characteristics) {
+                                log(`Checking characteristic: ${characteristic.uuid}`);
+                                
+                                // Look for heart rate measurement characteristic
+                                if (characteristic.uuid.includes('2a37') || 
+                                    characteristic.properties.notify) {
+                                    
+                                    log(`Attempting to use characteristic: ${characteristic.uuid}`);
+                                    
+                                    characteristic.addEventListener('characteristicvaluechanged', (event) => {
+                                        handleHeartRateData(event, characteristic.uuid);
+                                    });
+                                    
+                                    await characteristic.startNotifications();
+                                    log(`✓ Heart rate notifications started on ${characteristic.uuid}`);
+                                    return;
+                                }
+                            }
+                        } catch (charError) {
+                            log(`Error with service ${service.uuid}: ${charError.message}`, true);
+                        }
+                    }
+                }
+                
+                // If standard service not found, try all services for NOTIFY characteristics
+                log('Standard HR service not found, trying all notify characteristics...');
+                
+                for (const service of services) {
+                    try {
+                        const characteristics = await service.getCharacteristics();
+                        
+                        for (const characteristic of characteristics) {
+                            if (characteristic.properties.notify) {
+                                log(`Trying NOTIFY characteristic: ${characteristic.uuid} in service ${service.uuid}`);
+                                
+                                characteristic.addEventListener('characteristicvaluechanged', (event) => {
+                                    handleHeartRateData(event, characteristic.uuid);
+                                });
+                                
+                                try {
+                                    await characteristic.startNotifications();
+                                    log(`✓ Started notifications on ${characteristic.uuid}`);
+                                } catch (notifyError) {
+                                    log(`Failed to start notifications on ${characteristic.uuid}: ${notifyError.message}`);
+                                }
+                            }
+                        }
+                    } catch (serviceError) {
+                        log(`Error accessing service ${service.uuid}: ${serviceError.message}`);
+                    }
+                }
+                
+            } catch (error) {
+                log(`Heart rate monitoring error: ${error.message}`, true);
+            }
+        }
+
+        function handleHeartRateData(event, charUuid) {
+            const value = event.target.value;
+            const raw = new Uint8Array(value.buffer);
+            
+            log(`Data from ${charUuid}: [${Array.from(raw).join(', ')}]`);
+            
+            // Try different parsing methods for heart rate data
+            let heartRate = null;
+            
+            // Standard Bluetooth heart rate format
+            if (charUuid.includes('2a37')) {
+                const flags = raw[0];
+                const is16Bit = flags & 0x01;
+                heartRate = is16Bit ? value.getUint16(1, true) : raw[1];
+            }
+            // Try other common formats
+            else if (raw.length >= 2) {
+                // Try different byte positions
+                for (let i = 0; i < raw.length; i++) {
+                    const testValue = raw[i];
+                    if (testValue >= 40 && testValue <= 220) {
+                        heartRate = testValue;
+                        log(`Potential HR at byte ${i}: ${testValue}`);
+                        break;
+                    }
+                }
+            }
+            
+            if (heartRate && heartRate >= 40 && heartRate <= 220) {
+                document.getElementById('hr').textContent = heartRate;
+                hrValues.push(heartRate);
+                if (hrValues.length > 10) hrValues.shift();
+                
+                emaHr = calculateEMA(heartRate, emaHr);
+                document.getElementById('avgHr').textContent = emaHr.toFixed(1);
+                
+                updateStats();
+                log(`✓ Valid heart rate: ${heartRate} bpm`);
             }
         }
 
@@ -319,7 +400,14 @@
             debug.scrollTop = debug.scrollHeight;
         }
 
+        // Event listeners
         document.getElementById('connect').addEventListener('click', connectDevice);
+        document.getElementById('discover').addEventListener('click', discoverAllServices);
+        document.getElementById('startHR').addEventListener('click', startHeartRateMonitoring);
+
+        // Initial state
+        document.getElementById('discover').disabled = true;
+        document.getElementById('startHR').disabled = true;
     </script>
 </body>
 </html>
