@@ -91,7 +91,6 @@
         <div>Average SpO2: <span id="avgSpo2">--</span>%</div>
     </div>
 
-    <!-- Add this new div -->
     <div id="minmax">
         <div>Min Heart Rate: <span id="minHr">--</span> bpm</div>
         <div>Max Heart Rate: <span id="maxHr">--</span> bpm</div>
@@ -101,15 +100,21 @@
 
     <script>
         const debug = document.getElementById('debug');
-        let hrValues = []; // For recent history (last 10)
-        let allHrValues = []; // For all-time min, max, average
+        let hrValues = [];
         let spo2Values = [];
         let minHr = Infinity;
         let maxHr = -Infinity;
-        let sumHr = 0;
-        let countHr = 0;
+        let emaHr = 0;
+        const alpha = 0.2; // Smoothing factor (0-1), higher means more weight to recent values
+
+        function calculateEMA(currentValue, previousEMA) {
+            if (previousEMA === 0) return currentValue; // Initial case
+            return alpha * currentValue + (1 - alpha) * previousEMA;
+        }
 
         function updateStats() {
+            const avg = arr => arr.length ? (arr.reduce((a, b) => a + b) / arr.length).toFixed(1) : '--';
+            
             // Update heart rate list with highlighting for most recent
             const recentHrValues = hrValues.slice(-10);
             if (recentHrValues.length > 0) {
@@ -123,32 +128,30 @@
                 document.getElementById('hrList').textContent = '--';
             }
 
-            // Update average SpO2 (keeping as is)
-            const avg = arr => arr.length ? (arr.reduce((a, b) => a + b) / arr.length).toFixed(1) : '--';
+            // Update averages
             document.getElementById('avgSpo2').textContent = avg(spo2Values);
 
-            // Update heart rate average, min, max
-            if (countHr > 0) {
-                const avgHr = (sumHr / countHr).toFixed(1);
-                document.getElementById('avgHr').textContent = avgHr;
+            // Update min/max
+            if (hrValues.length > 0) {
+                minHr = Math.min(...hrValues);
+                maxHr = Math.max(...hrValues);
                 document.getElementById('minHr').textContent = minHr;
                 document.getElementById('maxHr').textContent = maxHr;
+            }
+
+            // Update EMA for heart rate
+            if (hrValues.length > 0) {
+                const currentHr = hrValues[hrValues.length - 1];
+                emaHr = calculateEMA(currentHr, emaHr);
+                document.getElementById('avgHr').textContent = emaHr.toFixed(1);
             }
         }
 
         async function connectDevice() {
             try {
                 const device = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
-                    optionalServices: [
-                        0x180D, // Heart Rate Service (short-form)
-                        0x1822, // Pulse Oximeter Service (short-form)
-                        "heart_rate",
-                        '00006287-3c17-d293-8e48-14fe2e4da212', // Proprietary
-                        '0000d0ff-3c17-d293-8e48-14fe2e4da212', // Proprietary
-                        '0000d0ff-3c17-d293-8e48-14fe2e4da212',
-                        '00006287-3c17-d293-8e48-14fe2e4da212'
-                    ]
+                    filters: [{ namePrefix: 'LEAP CALL' }],
+                    optionalServices: ['heart_rate', '0000aaaa-0000-1000-8000-aabbccddeeff']
                 });
 
                 log(`Connected to: ${device.name}`);
@@ -180,25 +183,22 @@
                         index += 2;
                     }
 
-                    if (rate > 0) { // Ignore invalid readings
+                    if (rate > 0 && rate < 250) { // Valid HR range
                         document.getElementById('hr').textContent = rate;
                         hrValues.push(rate);
-                        allHrValues.push(rate);
-                        if (hrValues.length > 10) hrValues.shift();
-
-                        // Update all-time stats
-                        sumHr += rate;
-                        countHr++;
-                        if (rate < minHr) minHr = rate;
-                        if (rate > maxHr) maxHr = rate;
-
+                        if (hrValues.length > 100) hrValues.shift(); // Keep more for stats
+                        
+                        // Update EMA immediately
+                        emaHr = calculateEMA(rate, emaHr);
+                        document.getElementById('avgHr').textContent = emaHr.toFixed(1);
+                        
                         updateStats();
                     }
                 });
                 await hrChar.startNotifications();
                 log('Heart rate notifications started');
 
-                // SpO2 (keeping as is, but note: custom services may need adding to optionalServices if used)
+                // SpO2 investigation (optional, can be removed if not needed)
                 await investigateSpo2(server);
 
             } catch (error) {
@@ -208,10 +208,9 @@
 
         async function investigateSpo2(server) {
             try {
-                // Focus on both potential SpO2 services
+                // Try the unknown service from screenshot
                 const services = [
-                    '00006287-3c17-d293-8e48-14fe2e4da212',
-                    '0000d0ff-3c17-d293-8e48-14fe2e4da212'
+                    '0000aaaa-0000-1000-8000-aabbccddeeff'
                 ];
 
                 for (const serviceUUID of services) {
@@ -232,7 +231,6 @@
                             log(`Characteristic ${characteristic.uuid}`);
                             log(`Properties: ${availableProps}`);
 
-                            // Only set up notifications, no writing to characteristics
                             if (props.notify) {
                                 await characteristic.startNotifications();
                                 log(`Started notifications for ${characteristic.uuid}`);
@@ -243,15 +241,10 @@
                                         const raw = new Uint8Array(value.buffer);
                                         log(`Raw data from ${characteristic.uuid}: [${Array.from(raw).join(', ')}]`);
 
-                                        // Try different parsing methods without modifying the device
+                                        // Attempt to parse possible SpO2 (assuming second byte or similar)
                                         let spo2Value = null;
-                                        
-                                        // Only process data if it matches expected SpO2 patterns
                                         if (raw.length >= 2) {
-                                            if (characteristic.uuid.includes('6387') || 
-                                                characteristic.uuid.includes('6487')) {
-                                                spo2Value = raw[1]; // Try second byte
-                                            }
+                                            spo2Value = raw[1];
                                         }
 
                                         if (isValidSpO2(spo2Value)) {
@@ -273,16 +266,11 @@
             }
         }
 
-        // Update validation to be more strict
         function isValidSpO2(value) {
-            // SpO2 values are typically between 90 and 100
-            // Allow slightly wider range for edge cases
             return typeof value === 'number' && value >= 85 && value <= 100;
         }
 
-        // Update display function to be more robust
         function updateSpO2Display(value) {
-            // Only update if we have a valid value
             if (isValidSpO2(value)) {
                 document.getElementById('spo2').textContent = value.toFixed(1);
                 spo2Values.push(Number(value));
