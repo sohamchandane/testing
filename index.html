@@ -323,6 +323,7 @@
                 
                 // Request device with specific heart rate service
                 device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
                     filters: [
                         { services: ['heart_rate'] },
                         { services: [0x180D] }
