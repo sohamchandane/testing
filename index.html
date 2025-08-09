@@ -321,22 +321,37 @@
                 
                 log('Requesting Bluetooth device...', 'info');
                 
-                // Request device with acceptAllDevices to allow any device
+                // Request device with acceptAllDevices and all possible services
                 device = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
                     optionalServices: [
+                        // Standard services
                         'heart_rate',
                         0x180D,
                         '0000180d-0000-1000-8000-00805f9b34fb',
                         'device_information',
+                        0x180A,
                         'battery_service',
+                        0x180F,
+                        'generic_access',
+                        0x1800,
+                        'generic_attribute',
+                        0x1801,
+                        
+                        // From your screenshot - proprietary services
                         '00006287-3c17-d293-8e48-14fe2e4da212',
                         '0000d0ff-3c17-d293-8e48-14fe2e4da212',
-                        '0000aaa0-0000-1000-8000-aabbccddeeff'
+                        '0000aaa0-0000-1000-8000-aabbccddeeff',
+                        
+                        // User Data service from your screenshot
+                        'user_data',
+                        0x181C,
+                        '0000181c-0000-1000-8000-00805f9b34fb'
                     ]
                 });
 
                 log(`Connected to device: ${device.name || 'Unknown Device'}`, 'success');
+                log(`Device ID: ${device.id}`, 'info');
                 
                 // Add disconnect event listener
                 device.addEventListener('gattserverdisconnected', onDisconnected);
@@ -344,111 +359,59 @@
                 // Connect to GATT server
                 log('Connecting to GATT server...', 'info');
                 server = await device.gatt.connect();
+                log(`GATT server connected: ${server.connected}`, 'success');
                 
-                // First, let's discover all available services
-                log('Discovering all available services...', 'info');
+                // Wait a moment for services to be available
+                log('Waiting for services to become available...', 'info');
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Try to get services with error handling for each attempt
+                let services = [];
+                
+                // Method 1: Try to get all primary services
                 try {
-                    const services = await server.getPrimaryServices();
-                    log(`Found ${services.length} services:`, 'info');
-                    
-                    for (const service of services) {
-                        log(`- Service: ${service.uuid}`, 'info');
-                    }
+                    log('Attempting to get all primary services...', 'info');
+                    services = await server.getPrimaryServices();
+                    log(`Found ${services.length} services via getPrimaryServices()`, services.length > 0 ? 'success' : 'warning');
                 } catch (e) {
-                    log(`Could not list services: ${e.message}`, 'warning');
+                    log(`getPrimaryServices() failed: ${e.message}`, 'warning');
                 }
                 
-                // Try multiple approaches to get heart rate service
-                let hrService = null;
-                const hrServiceUUIDs = [
-                    'heart_rate',
-                    0x180D,
-                    '0000180d-0000-1000-8000-00805f9b34fb'
-                ];
-                
-                for (const serviceUUID of hrServiceUUIDs) {
-                    try {
-                        log(`Trying to get heart rate service with UUID: ${serviceUUID}`, 'info');
-                        hrService = await server.getPrimaryService(serviceUUID);
-                        log(`Successfully got heart rate service: ${serviceUUID}`, 'success');
-                        break;
-                    } catch (e) {
-                        log(`Failed to get service ${serviceUUID}: ${e.message}`, 'warning');
+                // Method 2: Try to get specific services we know exist
+                if (services.length === 0) {
+                    log('Trying to get specific known services...', 'info');
+                    const knownServices = [
+                        '0000180d-0000-1000-8000-00805f9b34fb', // Heart Rate
+                        '0000180a-0000-1000-8000-00805f9b34fb', // Device Information  
+                        '00001800-0000-1000-8000-00805f9b34fb', // Generic Access
+                        '00001801-0000-1000-8000-00805f9b34fb', // Generic Attribute
+                        '00006287-3c17-d293-8e48-14fe2e4da212', // Proprietary 1
+                        '0000d0ff-3c17-d293-8e48-14fe2e4da212', // Proprietary 2
+                        '0000aaa0-0000-1000-8000-aabbccddeeff', // Unknown service
+                        '0000181c-0000-1000-8000-00805f9b34fb'  // User Data
+                    ];
+                    
+                    for (const serviceUUID of knownServices) {
+                        try {
+                            const service = await server.getPrimaryService(serviceUUID);
+                            services.push(service);
+                            log(`✓ Found service: ${serviceUUID}`, 'success');
+                        } catch (e) {
+                            log(`✗ Service not found: ${serviceUUID} (${e.message})`, 'warning');
+                        }
                     }
                 }
                 
-                if (!hrService) {
-                    // If standard heart rate service not found, try to discover and use any service
-                    log('Standard heart rate service not found. Investigating all services for heart rate characteristics...', 'warning');
-                    await investigateAllServicesForHeartRate(server);
-                    return;
+                if (services.length === 0) {
+                    throw new Error('No services found. Your watch may need to be in pairing mode or have heart rate measurement active.');
                 }
                 
-                // Get Heart Rate Measurement characteristic
-                log('Getting Heart Rate Measurement characteristic...', 'info');
-                const hrCharUUIDs = [
-                    'heart_rate_measurement',
-                    0x2A37,
-                    '00002a37-0000-1000-8000-00805f9b34fb'
-                ];
-                
-                let hrCharacteristic = null;
-                for (const charUUID of hrCharUUIDs) {
-                    try {
-                        log(`Trying to get heart rate characteristic with UUID: ${charUUID}`, 'info');
-                        hrCharacteristic = await hrService.getCharacteristic(charUUID);
-                        log(`Successfully got heart rate characteristic: ${charUUID}`, 'success');
-                        break;
-                    } catch (e) {
-                        log(`Failed to get characteristic ${charUUID}: ${e.message}`, 'warning');
-                    }
-                }
-                
-                if (!hrCharacteristic) {
-                    log('Heart rate measurement characteristic not found', 'error');
-                    throw new Error('Heart rate measurement characteristic not available');
-                }
-                
-                // Log characteristic properties
-                const properties = hrCharacteristic.properties;
-                log(`Characteristic properties: ${Object.keys(properties).filter(key => properties[key]).join(', ')}`, 'info');
-                
-                // Set up notifications
-                log('Starting heart rate notifications...', 'info');
-                hrCharacteristic.addEventListener('characteristicvaluechanged', handleHeartRateChanged);
-                await hrCharacteristic.startNotifications();
-                
-                // Update UI
-                isConnected = true;
-                updateConnectionStatus('Connected', 'status-connected');
-                document.getElementById('disconnect').disabled = false;
-                
-                log('Heart rate monitoring started successfully!', 'success');
-                log('Waiting for heart rate measurements... Make sure to start heart rate measurement on your watch!', 'info');
-                
-            } catch (error) {
-                log(`Connection error: ${error.message}`, 'error');
-                updateConnectionStatus('Connection Failed', 'status-disconnected');
-                document.getElementById('connect').disabled = false;
-                
-                // Additional error handling
-                if (error.name === 'NotFoundError') {
-                    log('No device was selected. Please try again.', 'warning');
-                } else if (error.name === 'SecurityError') {
-                    log('Bluetooth access denied. Please check browser permissions.', 'warning');
-                } else if (error.name === 'NotSupportedError') {
-                    log('Bluetooth is not supported on this device/browser.', 'warning');
-                }
-            }
-        }
-
-        async function investigateAllServicesForHeartRate(server) {
-            try {
-                log('Starting comprehensive service investigation...', 'info');
-                const services = await server.getPrimaryServices();
+                // Now investigate each service we found
+                log(`\n=== Investigating ${services.length} services ===`, 'info');
+                let heartRateCharFound = false;
                 
                 for (const service of services) {
-                    log(`\n--- Investigating service: ${service.uuid} ---`, 'info');
+                    log(`\n--- Service: ${service.uuid} ---`, 'info');
                     
                     try {
                         const characteristics = await service.getCharacteristics();
@@ -461,37 +424,84 @@
                                 .map(([k, _]) => k)
                                 .join(', ');
                             
-                            log(`  Characteristic: ${characteristic.uuid}`, 'info');
-                            log(`  Properties: ${availableProps}`, 'info');
+                            log(`  Char: ${characteristic.uuid} | Props: ${availableProps}`, 'info');
                             
-                            // If this characteristic can notify, let's try to monitor it
-                            if (props.notify) {
-                                try {
-                                    log(`  Setting up notifications for ${characteristic.uuid}...`, 'info');
-                                    characteristic.addEventListener('characteristicvaluechanged', (event) => {
-                                        handleGenericCharacteristicChange(event, service.uuid, characteristic.uuid);
-                                    });
-                                    await characteristic.startNotifications();
-                                    log(`  ✓ Notifications started for ${characteristic.uuid}`, 'success');
-                                } catch (notifyError) {
-                                    log(`  ✗ Failed to start notifications: ${notifyError.message}`, 'warning');
-                                }
+                            // Special handling for known heart rate characteristic
+                            if (characteristic.uuid === '00002a37-0000-1000-8000-00805f9b34fb' || 
+                                characteristic.uuid.includes('2a37')) {
+                                log(`  ★ HEART RATE MEASUREMENT CHARACTERISTIC FOUND!`, 'success');
+                                heartRateCharFound = true;
+                                await setupHeartRateCharacteristic(characteristic);
+                            }
+                            // Monitor any characteristic that can notify
+                            else if (props.notify) {
+                                await setupGenericNotifications(characteristic, service.uuid);
                             }
                         }
                     } catch (charError) {
-                        log(`Error investigating service ${service.uuid}: ${charError.message}`, 'error');
+                        log(`Error with service ${service.uuid}: ${charError.message}`, 'error');
                     }
                 }
                 
-                // Update UI to show we're monitoring
+                // Update connection status
                 isConnected = true;
-                updateConnectionStatus('Connected (Monitoring All)', 'status-connected');
+                const statusText = heartRateCharFound ? 'Connected (HR Found)' : 'Connected (Monitoring)';
+                updateConnectionStatus(statusText, 'status-connected');
                 document.getElementById('disconnect').disabled = false;
-                log('\nNow monitoring all available characteristics. Start heart rate measurement on your watch!', 'success');
+                
+                log('\n=== SETUP COMPLETE ===', 'success');
+                log('🔥 NOW START HEART RATE MEASUREMENT ON YOUR WATCH! 🔥', 'success');
+                if (!heartRateCharFound) {
+                    log('Standard HR characteristic not found - monitoring all notifications for HR data', 'warning');
+                }
                 
             } catch (error) {
-                log(`Service investigation error: ${error.message}`, 'error');
-                throw error;
+                log(`Connection error: ${error.message}`, 'error');
+                updateConnectionStatus('Connection Failed', 'status-disconnected');
+                document.getElementById('connect').disabled = false;
+                
+                // Specific troubleshooting advice
+                if (error.message.includes('No services found')) {
+                    log('\n🔧 TROUBLESHOOTING TIPS:', 'warning');
+                    log('1. Start heart rate measurement on your watch BEFORE connecting', 'warning');
+                    log('2. Keep your watch close to your computer', 'warning');
+                    log('3. Make sure your watch is not connected to other devices', 'warning');
+                    log('4. Try restarting your watch\'s Bluetooth', 'warning');
+                }
+            }
+        }
+
+        async function setupHeartRateCharacteristic(characteristic) {
+            try {
+                log('Setting up standard heart rate notifications...', 'info');
+                characteristic.addEventListener('characteristicvaluechanged', handleStandardHeartRateChanged);
+                await characteristic.startNotifications();
+                log('✓ Standard heart rate notifications active!', 'success');
+            } catch (error) {
+                log(`Failed to setup HR characteristic: ${error.message}`, 'error');
+            }
+        }
+
+        async function setupGenericNotifications(characteristic, serviceUUID) {
+            try {
+                characteristic.addEventListener('characteristicvaluechanged', (event) => {
+                    handleGenericCharacteristicChange(event, serviceUUID, characteristic.uuid);
+                });
+                await characteristic.startNotifications();
+                log(`  ✓ Monitoring: ${characteristic.uuid}`, 'info');
+            } catch (error) {
+                log(`  ✗ Could not monitor: ${characteristic.uuid} (${error.message})`, 'warning');
+            }
+        }
+
+        function handleStandardHeartRateChanged(event) {
+            try {
+                const value = event.target.value;
+                const heartRate = parseHeartRateValue(value);
+                log(`Standard HR: ${heartRate} bpm`, 'success');
+                updateHeartRateDisplay(heartRate);
+            } catch (error) {
+                log(`Error parsing standard HR: ${error.message}`, 'error');
             }
         }
 
