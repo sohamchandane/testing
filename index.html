@@ -1,107 +1,474 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Heart Rate Monitor</title>
-<style>
-    body { font-family: Arial; background: #f2f2f2; margin: 20px; }
-    button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
-    button:disabled { background: #aaa; cursor: not-allowed; }
-    #stats, #history { background: white; padding: 15px; margin: 15px 0; border-radius: 8px; }
-    #history span.recent { color: green; font-weight: bold; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smartwatch Heart Rate Monitor</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .control-panel {
+            background: rgba(255,255,255,0.95);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            backdrop-filter: blur(10px);
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            background: linear-gradient(45deg, #007bff, #0056b3);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3);
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 123, 255, 0.4);
+        }
+
+        button:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        button + button {
+            margin-left: 10px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: rgba(255,255,255,0.95);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .stat-card h3 {
+            margin-top: 0;
+            color: #333;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .stat-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #007bff;
+            margin: 10px 0;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .heart-rate-history {
+            margin-top: 15px;
+        }
+
+        .heart-rate-history h4 {
+            margin: 0 0 10px 0;
+            color: #333;
+            font-size: 16px;
+        }
+
+        .hr-values {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .hr-value {
+            background: #f8f9fa;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 14px;
+            border: 1px solid #dee2e6;
+        }
+
+        .hr-value.recent {
+            background: #28a745;
+            color: white;
+            font-weight: bold;
+            animation: pulse 1s ease-in-out;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        .connection-status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+
+        .status-connected {
+            background: #28a745;
+            color: white;
+        }
+
+        .status-disconnected {
+            background: #dc3545;
+            color: white;
+        }
+
+        .status-connecting {
+            background: #ffc107;
+            color: #333;
+        }
+
+        #debug {
+            background: rgba(0,0,0,0.9);
+            color: #00ff00;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            height: 300px;
+            overflow-y: auto;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            backdrop-filter: blur(10px);
+        }
+
+        .debug-line {
+            margin: 2px 0;
+            line-height: 1.4;
+        }
+
+        .debug-error { color: #ff6b6b; }
+        .debug-success { color: #51cf66; }
+        .debug-info { color: #74c0fc; }
+        .debug-warning { color: #ffd43b; }
+    </style>
 </head>
 <body>
+    <div class="container">
+        <h1>♥ Smartwatch Heart Rate Monitor</h1>
+        
+        <div class="control-panel">
+            <button id="connect">Connect Smartwatch</button>
+            <button id="disconnect" disabled>Disconnect</button>
+            <button id="clearData">Clear Data</button>
+            <span id="connectionStatus" class="connection-status status-disconnected">Disconnected</span>
+        </div>
 
-<button id="connect">Connect to Smartwatch</button>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Current Heart Rate</h3>
+                <div class="stat-value" id="currentHr">--</div>
+                <div class="stat-label">beats per minute</div>
+                
+                <div class="heart-rate-history">
+                    <h4>Recent Readings</h4>
+                    <div class="hr-values" id="hrValuesList">
+                        <span class="hr-value">--</span>
+                    </div>
+                </div>
+            </div>
 
-<div id="stats">
-    <div>Current Heart Rate: <span id="hr">--</span> bpm</div>
-    <div>Average: <span id="avg">--</span> bpm</div>
-    <div>Min: <span id="min">--</span> bpm</div>
-    <div>Max: <span id="max">--</span> bpm</div>
-</div>
+            <div class="stat-card">
+                <h3>Statistics</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div>
+                        <div class="stat-value" style="font-size: 1.5em;" id="avgHr">--</div>
+                        <div class="stat-label">Average BPM</div>
+                    </div>
+                    <div>
+                        <div class="stat-value" style="font-size: 1.5em;" id="totalReadings">0</div>
+                        <div class="stat-label">Total Readings</div>
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px;">
+                    <div>
+                        <div class="stat-value" style="font-size: 1.5em; color: #dc3545;" id="minHr">--</div>
+                        <div class="stat-label">Min BPM</div>
+                    </div>
+                    <div>
+                        <div class="stat-value" style="font-size: 1.5em; color: #28a745;" id="maxHr">--</div>
+                        <div class="stat-label">Max BPM</div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-<div id="history">
-    Recent: <span id="list">--</span>
-</div>
+        <div id="debug"></div>
+    </div>
 
-<pre id="log" style="background:black;color:#0f0;padding:10px;height:150px;overflow:auto;border-radius:5px;"></pre>
+    <script>
+        const debug = document.getElementById('debug');
+        let device = null;
+        let server = null;
+        let hrCharacteristic = null;
+        let hrValues = [];
+        let isConnected = false;
 
-<script>
-const logBox = document.getElementById("log");
-const hrElem = document.getElementById("hr");
-const avgElem = document.getElementById("avg");
-const minElem = document.getElementById("min");
-const maxElem = document.getElementById("max");
-const listElem = document.getElementById("list");
+        // Heart rate statistics
+        let minHr = Infinity;
+        let maxHr = -Infinity;
+        let totalHr = 0;
+        let readingCount = 0;
 
-let hrValues = [];
+        function updateConnectionStatus(status, className) {
+            const statusElement = document.getElementById('connectionStatus');
+            statusElement.textContent = status;
+            statusElement.className = `connection-status ${className}`;
+        }
 
-function log(msg, error=false) {
-    const time = new Date().toLocaleTimeString();
-    logBox.innerHTML += `[${time}] ${msg}\n`;
-    logBox.scrollTop = logBox.scrollHeight;
-}
+        function updateHeartRateDisplay(heartRate) {
+            // Update current heart rate
+            document.getElementById('currentHr').textContent = heartRate;
+            
+            // Add to values array
+            hrValues.push(heartRate);
+            if (hrValues.length > 10) {
+                hrValues.shift(); // Keep only last 10 values for display
+            }
+            
+            // Update statistics
+            readingCount++;
+            totalHr += heartRate;
+            minHr = Math.min(minHr, heartRate);
+            maxHr = Math.max(maxHr, heartRate);
+            
+            // Update display
+            document.getElementById('avgHr').textContent = (totalHr / readingCount).toFixed(1);
+            document.getElementById('totalReadings').textContent = readingCount;
+            document.getElementById('minHr').textContent = minHr === Infinity ? '--' : minHr;
+            document.getElementById('maxHr').textContent = maxHr === -Infinity ? '--' : maxHr;
+            
+            // Update recent values display
+            updateRecentValues();
+            
+            log(`Heart Rate: ${heartRate} bpm`, 'success');
+        }
 
-function updateStats() {
-    if (!hrValues.length) return;
-    const avg = (hrValues.reduce((a,b) => a+b) / hrValues.length).toFixed(1);
-    const min = Math.min(...hrValues);
-    const max = Math.max(...hrValues);
-    const recent = hrValues.slice(-10);
+        function updateRecentValues() {
+            const container = document.getElementById('hrValuesList');
+            if (hrValues.length === 0) {
+                container.innerHTML = '<span class="hr-value">--</span>';
+                return;
+            }
+            
+            container.innerHTML = hrValues
+                .map((value, index) => {
+                    const isRecent = index === hrValues.length - 1;
+                    return `<span class="hr-value ${isRecent ? 'recent' : ''}">${value}</span>`;
+                })
+                .join('');
+        }
 
-    avgElem.textContent = avg;
-    minElem.textContent = min;
-    maxElem.textContent = max;
-    listElem.innerHTML = recent.map((v,i) =>
-        i === recent.length - 1 ? `<span class="recent">${v}</span>` : v
-    ).join(", ");
-}
+        function parseHeartRateValue(dataView) {
+            // Heart Rate Measurement format according to Bluetooth spec
+            const flags = dataView.getUint8(0);
+            const is16Bit = flags & 0x01;
+            
+            let heartRate;
+            if (is16Bit) {
+                heartRate = dataView.getUint16(1, true); // little-endian
+            } else {
+                heartRate = dataView.getUint8(1);
+            }
+            
+            return heartRate;
+        }
 
-async function connectHeartRate() {
-    try {
-        log("Requesting Bluetooth device...");
-        const device = await navigator.bluetooth.requestDevice({
-            acceptAllDevices: true,
-            optionalServices: ["heart_rate"]
-        });
+        async function connectDevice() {
+            try {
+                updateConnectionStatus('Connecting...', 'status-connecting');
+                document.getElementById('connect').disabled = true;
+                
+                log('Requesting Bluetooth device...', 'info');
+                
+                // Request device with specific heart rate service
+                device = await navigator.bluetooth.requestDevice({
+                    filters: [
+                        { services: ['heart_rate'] },
+                        { services: [0x180D] }
+                    ],
+                    optionalServices: [
+                        'heart_rate',
+                        0x180D,
+                        'device_information',
+                        'battery_service'
+                    ]
+                });
 
-        device.addEventListener('gattserverdisconnected', () => {
-            log("Device disconnected", true);
-        });
+                log(`Connected to device: ${device.name || 'Unknown Device'}`, 'success');
+                
+                // Add disconnect event listener
+                device.addEventListener('gattserverdisconnected', onDisconnected);
+                
+                // Connect to GATT server
+                log('Connecting to GATT server...', 'info');
+                server = await device.gatt.connect();
+                
+                // Get Heart Rate service
+                log('Getting Heart Rate service...', 'info');
+                const hrService = await server.getPrimaryService('heart_rate');
+                
+                // Get Heart Rate Measurement characteristic
+                log('Getting Heart Rate Measurement characteristic...', 'info');
+                hrCharacteristic = await hrService.getCharacteristic('heart_rate_measurement');
+                
+                // Log characteristic properties
+                const properties = hrCharacteristic.properties;
+                log(`Characteristic properties: ${Object.keys(properties).filter(key => properties[key]).join(', ')}`, 'info');
+                
+                // Set up notifications
+                log('Starting heart rate notifications...', 'info');
+                hrCharacteristic.addEventListener('characteristicvaluechanged', handleHeartRateChanged);
+                await hrCharacteristic.startNotifications();
+                
+                // Update UI
+                isConnected = true;
+                updateConnectionStatus('Connected', 'status-connected');
+                document.getElementById('disconnect').disabled = false;
+                
+                log('Heart rate monitoring started successfully!', 'success');
+                log('Waiting for heart rate measurements...', 'info');
+                
+            } catch (error) {
+                log(`Connection error: ${error.message}`, 'error');
+                updateConnectionStatus('Connection Failed', 'status-disconnected');
+                document.getElementById('connect').disabled = false;
+                
+                // Additional error handling
+                if (error.name === 'NotFoundError') {
+                    log('No device was selected. Please try again.', 'warning');
+                } else if (error.name === 'SecurityError') {
+                    log('Bluetooth access denied. Please check browser permissions.', 'warning');
+                } else if (error.name === 'NotSupportedError') {
+                    log('Bluetooth is not supported on this device/browser.', 'warning');
+                }
+            }
+        }
 
-        log(`Connecting to ${device.name || "Unknown Device"}...`);
-        const server = await device.gatt.connect();
+        function handleHeartRateChanged(event) {
+            try {
+                const value = event.target.value;
+                const heartRate = parseHeartRateValue(value);
+                
+                // Validate heart rate (reasonable range)
+                if (heartRate >= 30 && heartRate <= 220) {
+                    updateHeartRateDisplay(heartRate);
+                } else {
+                    log(`Invalid heart rate reading: ${heartRate} bpm`, 'warning');
+                }
+                
+                // Log raw data for debugging
+                const rawData = new Uint8Array(value.buffer);
+                log(`Raw data: [${Array.from(rawData).join(', ')}] -> HR: ${heartRate}`, 'info');
+                
+            } catch (error) {
+                log(`Error parsing heart rate data: ${error.message}`, 'error');
+            }
+        }
 
-        log("Getting Heart Rate service...");
-        const service = await server.getPrimaryService("heart_rate");
+        function onDisconnected() {
+            log('Device disconnected', 'warning');
+            isConnected = false;
+            updateConnectionStatus('Disconnected', 'status-disconnected');
+            document.getElementById('connect').disabled = false;
+            document.getElementById('disconnect').disabled = true;
+            
+            // Clean up
+            device = null;
+            server = null;
+            hrCharacteristic = null;
+        }
 
-        log("Getting Heart Rate Measurement characteristic...");
-        const char = await service.getCharacteristic(0x2A37);
+        async function disconnectDevice() {
+            if (device && device.gatt.connected) {
+                try {
+                    log('Disconnecting device...', 'info');
+                    await device.gatt.disconnect();
+                } catch (error) {
+                    log(`Disconnect error: ${error.message}`, 'error');
+                }
+            }
+        }
 
-        char.addEventListener("characteristicvaluechanged", event => {
-            const value = event.target.value;
-            let flags = value.getUint8(0);
-            let rate16bits = flags & 0x01;
-            let bpm = rate16bits ? value.getUint16(1, true) : value.getUint8(1);
+        function clearData() {
+            hrValues = [];
+            minHr = Infinity;
+            maxHr = -Infinity;
+            totalHr = 0;
+            readingCount = 0;
+            
+            // Reset display
+            document.getElementById('currentHr').textContent = '--';
+            document.getElementById('avgHr').textContent = '--';
+            document.getElementById('totalReadings').textContent = '0';
+            document.getElementById('minHr').textContent = '--';
+            document.getElementById('maxHr').textContent = '--';
+            updateRecentValues();
+            
+            log('Data cleared', 'info');
+        }
 
-            hrElem.textContent = bpm;
-            hrValues.push(bpm);
-            updateStats();
-            log(`Heart Rate: ${bpm} bpm`);
-        });
+        function log(message, type = 'info') {
+            const line = document.createElement('div');
+            line.className = `debug-line debug-${type}`;
+            line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            debug.appendChild(line);
+            debug.scrollTop = debug.scrollHeight;
+        }
 
-        await char.startNotifications();
-        log("Heart rate notifications started. Start measurement on your watch.");
+        // Event listeners
+        document.getElementById('connect').addEventListener('click', connectDevice);
+        document.getElementById('disconnect').addEventListener('click', disconnectDevice);
+        document.getElementById('clearData').addEventListener('click', clearData);
 
-    } catch (error) {
-        log("Error: " + error, true);
-    }
-}
-
-document.getElementById("connect").addEventListener("click", connectHeartRate);
-</script>
-
+        // Initial log
+        log('Heart Rate Monitor initialized. Click "Connect Smartwatch" to begin.', 'info');
+        
+        // Check for Bluetooth support
+        if (!navigator.bluetooth) {
+            log('Bluetooth not supported in this browser', 'error');
+            document.getElementById('connect').disabled = true;
+        }
+    </script>
 </body>
 </html>
