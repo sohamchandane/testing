@@ -321,17 +321,18 @@
                 
                 log('Requesting Bluetooth device...', 'info');
                 
-                // Request device with specific heart rate service
+                // Request device with acceptAllDevices to allow any device
                 device = await navigator.bluetooth.requestDevice({
-                    filters: [
-                        { services: ['heart_rate'] },
-                        { services: [0x180D] }
-                    ],
+                    acceptAllDevices: true,
                     optionalServices: [
                         'heart_rate',
                         0x180D,
+                        '0000180d-0000-1000-8000-00805f9b34fb',
                         'device_information',
-                        'battery_service'
+                        'battery_service',
+                        '00006287-3c17-d293-8e48-14fe2e4da212',
+                        '0000d0ff-3c17-d293-8e48-14fe2e4da212',
+                        '0000aaa0-0000-1000-8000-aabbccddeeff'
                     ]
                 });
 
@@ -344,13 +345,69 @@
                 log('Connecting to GATT server...', 'info');
                 server = await device.gatt.connect();
                 
-                // Get Heart Rate service
-                log('Getting Heart Rate service...', 'info');
-                const hrService = await server.getPrimaryService('heart_rate');
+                // First, let's discover all available services
+                log('Discovering all available services...', 'info');
+                try {
+                    const services = await server.getPrimaryServices();
+                    log(`Found ${services.length} services:`, 'info');
+                    
+                    for (const service of services) {
+                        log(`- Service: ${service.uuid}`, 'info');
+                    }
+                } catch (e) {
+                    log(`Could not list services: ${e.message}`, 'warning');
+                }
+                
+                // Try multiple approaches to get heart rate service
+                let hrService = null;
+                const hrServiceUUIDs = [
+                    'heart_rate',
+                    0x180D,
+                    '0000180d-0000-1000-8000-00805f9b34fb'
+                ];
+                
+                for (const serviceUUID of hrServiceUUIDs) {
+                    try {
+                        log(`Trying to get heart rate service with UUID: ${serviceUUID}`, 'info');
+                        hrService = await server.getPrimaryService(serviceUUID);
+                        log(`Successfully got heart rate service: ${serviceUUID}`, 'success');
+                        break;
+                    } catch (e) {
+                        log(`Failed to get service ${serviceUUID}: ${e.message}`, 'warning');
+                    }
+                }
+                
+                if (!hrService) {
+                    // If standard heart rate service not found, try to discover and use any service
+                    log('Standard heart rate service not found. Investigating all services for heart rate characteristics...', 'warning');
+                    await investigateAllServicesForHeartRate(server);
+                    return;
+                }
                 
                 // Get Heart Rate Measurement characteristic
                 log('Getting Heart Rate Measurement characteristic...', 'info');
-                hrCharacteristic = await hrService.getCharacteristic('heart_rate_measurement');
+                const hrCharUUIDs = [
+                    'heart_rate_measurement',
+                    0x2A37,
+                    '00002a37-0000-1000-8000-00805f9b34fb'
+                ];
+                
+                let hrCharacteristic = null;
+                for (const charUUID of hrCharUUIDs) {
+                    try {
+                        log(`Trying to get heart rate characteristic with UUID: ${charUUID}`, 'info');
+                        hrCharacteristic = await hrService.getCharacteristic(charUUID);
+                        log(`Successfully got heart rate characteristic: ${charUUID}`, 'success');
+                        break;
+                    } catch (e) {
+                        log(`Failed to get characteristic ${charUUID}: ${e.message}`, 'warning');
+                    }
+                }
+                
+                if (!hrCharacteristic) {
+                    log('Heart rate measurement characteristic not found', 'error');
+                    throw new Error('Heart rate measurement characteristic not available');
+                }
                 
                 // Log characteristic properties
                 const properties = hrCharacteristic.properties;
@@ -367,7 +424,7 @@
                 document.getElementById('disconnect').disabled = false;
                 
                 log('Heart rate monitoring started successfully!', 'success');
-                log('Waiting for heart rate measurements...', 'info');
+                log('Waiting for heart rate measurements... Make sure to start heart rate measurement on your watch!', 'info');
                 
             } catch (error) {
                 log(`Connection error: ${error.message}`, 'error');
@@ -382,6 +439,102 @@
                 } else if (error.name === 'NotSupportedError') {
                     log('Bluetooth is not supported on this device/browser.', 'warning');
                 }
+            }
+        }
+
+        async function investigateAllServicesForHeartRate(server) {
+            try {
+                log('Starting comprehensive service investigation...', 'info');
+                const services = await server.getPrimaryServices();
+                
+                for (const service of services) {
+                    log(`\n--- Investigating service: ${service.uuid} ---`, 'info');
+                    
+                    try {
+                        const characteristics = await service.getCharacteristics();
+                        log(`Found ${characteristics.length} characteristics`, 'info');
+                        
+                        for (const characteristic of characteristics) {
+                            const props = characteristic.properties;
+                            const availableProps = Object.entries(props)
+                                .filter(([_, v]) => v)
+                                .map(([k, _]) => k)
+                                .join(', ');
+                            
+                            log(`  Characteristic: ${characteristic.uuid}`, 'info');
+                            log(`  Properties: ${availableProps}`, 'info');
+                            
+                            // If this characteristic can notify, let's try to monitor it
+                            if (props.notify) {
+                                try {
+                                    log(`  Setting up notifications for ${characteristic.uuid}...`, 'info');
+                                    characteristic.addEventListener('characteristicvaluechanged', (event) => {
+                                        handleGenericCharacteristicChange(event, service.uuid, characteristic.uuid);
+                                    });
+                                    await characteristic.startNotifications();
+                                    log(`  ✓ Notifications started for ${characteristic.uuid}`, 'success');
+                                } catch (notifyError) {
+                                    log(`  ✗ Failed to start notifications: ${notifyError.message}`, 'warning');
+                                }
+                            }
+                        }
+                    } catch (charError) {
+                        log(`Error investigating service ${service.uuid}: ${charError.message}`, 'error');
+                    }
+                }
+                
+                // Update UI to show we're monitoring
+                isConnected = true;
+                updateConnectionStatus('Connected (Monitoring All)', 'status-connected');
+                document.getElementById('disconnect').disabled = false;
+                log('\nNow monitoring all available characteristics. Start heart rate measurement on your watch!', 'success');
+                
+            } catch (error) {
+                log(`Service investigation error: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        function handleGenericCharacteristicChange(event, serviceUUID, characteristicUUID) {
+            try {
+                const value = event.target.value;
+                const rawData = new Uint8Array(value.buffer);
+                
+                log(`Data from ${serviceUUID}/${characteristicUUID}: [${Array.from(rawData).join(', ')}]`, 'info');
+                
+                // Try different parsing methods for heart rate
+                let possibleHeartRate = null;
+                
+                // Method 1: Standard heart rate format
+                if (rawData.length >= 2) {
+                    const flags = rawData[0];
+                    const is16Bit = flags & 0x01;
+                    if (is16Bit && rawData.length >= 3) {
+                        possibleHeartRate = rawData[1] | (rawData[2] << 8);
+                    } else {
+                        possibleHeartRate = rawData[1];
+                    }
+                }
+                
+                // Method 2: Try each byte as potential heart rate
+                for (let i = 0; i < rawData.length; i++) {
+                    const byteValue = rawData[i];
+                    if (byteValue >= 30 && byteValue <= 220) {
+                        log(`  Possible heart rate from byte ${i}: ${byteValue} bpm`, 'warning');
+                        if (!possibleHeartRate || (byteValue >= 40 && byteValue <= 200)) {
+                            possibleHeartRate = byteValue;
+                        }
+                    }
+                }
+                
+                // If we found a reasonable heart rate value, use it
+                if (possibleHeartRate && possibleHeartRate >= 30 && possibleHeartRate <= 220) {
+                    log(`  → Detected heart rate: ${possibleHeartRate} bpm from ${characteristicUUID}`, 'success');
+                    updateHeartRateDisplay(possibleHeartRate);
+                }
+                
+            } catch (error) {
+                log(`Error parsing data from ${characteristicUUID}: ${error.message}`, 'error');
             }
         }
 
