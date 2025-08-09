@@ -94,7 +94,6 @@
 
         // State variables
         let bluetoothDevice = null;
-        let hrCharacteristic = null;
         let hrValues = [];
         let minHr = Infinity;
         let maxHr = -Infinity;
@@ -126,14 +125,14 @@
                 statusEl.textContent = 'Status: Searching...';
                 
                 bluetoothDevice = await navigator.bluetooth.requestDevice({
-                    // Using acceptAllDevices is crucial for non-standard devices like many watches.
                     acceptAllDevices: true,
-                    // We still list optionalServices to hint what we're looking for.
+                    // **UPDATED:** Requesting specific proprietary services increases our chances
+                    // of finding the correct one for the BOAT LEAP CALL.
                     optionalServices: [
                         'heart_rate', // Standard Heart Rate Service
                         '0000180d-0000-1000-8000-00805f9b34fb', // Full UUID for Heart Rate
-                        // Add other known proprietary service UUIDs here if you find them
                         '0000fee0-0000-1000-8000-00805f9b34fb', // Common Xiaomi/Huami
+                        '0000aaa0-0000-1000-8000-aabbccddeeff', // From your screenshot
                     ]
                 });
 
@@ -146,8 +145,7 @@
                 log('GATT Server connected. Discovering services...', 'success');
                 statusEl.textContent = 'Status: Discovering Services...';
 
-                // This is the key part: find the heart rate service and characteristic
-                await findHeartRateService(server);
+                await findAllServicesAndCharacteristics(server);
 
             } catch (error) {
                 log(`Connection failed: ${error}`, 'error');
@@ -162,7 +160,6 @@
             log('Device disconnected.', 'error');
             statusEl.textContent = 'Status: Disconnected';
             bluetoothDevice = null;
-            hrCharacteristic = null;
             // Reset UI
             hrDisplay.textContent = '--';
             minHrEl.textContent = '--';
@@ -172,49 +169,51 @@
         }
 
         /**
-         * Searches for the heart rate service, starting with the standard one
-         * and then falling back to a broader search.
+         * **UPDATED:** This function now discovers ALL services and characteristics,
+         * logging their properties and subscribing to any that can notify or indicate.
          * @param {BluetoothRemoteGATTServer} server - The GATT server instance.
          */
-        async function findHeartRateService(server) {
+        async function findAllServicesAndCharacteristics(server) {
             try {
-                // First, try the standard heart rate service
-                log('Attempting to find standard Heart Rate service (180d)...');
-                const service = await server.getPrimaryService('heart_rate').catch(() => null);
-
-                if (service) {
-                    log('Standard Heart Rate service found!', 'success');
-                    hrCharacteristic = await service.getCharacteristic('heart_rate_measurement');
-                    await startHrNotifications(hrCharacteristic);
-                    return;
-                }
-
-                // If standard service fails, search all services for a suitable characteristic
-                log('Standard service not found. Searching all services for notifying characteristics...');
-                statusEl.textContent = 'Status: Searching all services...';
-                
+                log('Searching all services...');
                 const allServices = await server.getPrimaryServices();
                 log(`Found ${allServices.length} services. Inspecting them...`);
 
                 for (const service of allServices) {
                     log(`Inspecting Service: ${service.uuid}`);
-                    const characteristics = await service.getCharacteristics();
-                    
-                    for (const char of characteristics) {
-                        // We are looking for any characteristic that can send notifications
-                        if (char.properties.notify) {
-                            log(`Found NOTIFY characteristic: ${char.uuid}. Subscribing for data...`);
-                            // We will start listening to ALL notifying characteristics.
-                            // The handleHeartRateData function will figure out which one is correct.
-                            await startHrNotifications(char);
+                    try {
+                        const characteristics = await service.getCharacteristics();
+                        if (characteristics.length === 0) {
+                            log(`  -> Service has no characteristics.`, 'info');
+                            continue;
                         }
+                        log(`  -> Found ${characteristics.length} characteristics.`);
+
+                        for (const char of characteristics) {
+                            // Build properties string for detailed logging
+                            const props = [];
+                            if (char.properties.read) props.push('READ');
+                            if (char.properties.write) props.push('WRITE');
+                            if (char.properties.writeWithoutResponse) props.push('WRITE_NO_RESPONSE');
+                            if (char.properties.notify) props.push('NOTIFY');
+                            if (char.properties.indicate) props.push('INDICATE');
+                            log(`  - Char: ${char.uuid} [Properties: ${props.join(', ')}]`);
+
+                            // Subscribe to any characteristic that can send data updates.
+                            if (char.properties.notify || char.properties.indicate) {
+                                log(`    Found NOTIFY/INDICATE property. Subscribing for data...`, 'success');
+                                await startHrNotifications(char);
+                            }
+                        }
+                    } catch (error) {
+                        log(`  -> Error getting characteristics for this service: ${error.message}`, 'error');
                     }
                 }
                 log('Finished searching all services. Waiting for data...');
                 statusEl.textContent = 'Status: Connected & Listening';
 
             } catch (error) {
-                log(`Error finding service: ${error}`, 'error');
+                log(`Error finding services: ${error}`, 'error');
                 statusEl.textContent = `Status: Error - ${error.message}`;
             }
         }
@@ -243,33 +242,27 @@
             const value = characteristic.value;
             const rawData = new Uint8Array(value.buffer);
             
-            // Log the raw data from the specific characteristic - THIS IS CRUCIAL FOR DEBUGGING
             log(`Data from [${characteristic.uuid}]: [${rawData.join(', ')}]`, 'data');
 
             let heartRate = parseHeartRate(value);
 
             if (heartRate !== null) {
-                // We found a valid heart rate! This is likely the correct characteristic.
                 log(`Successfully parsed Heart Rate: ${heartRate} bpm`, 'success');
                 
-                // Update UI elements
                 hrDisplay.textContent = heartRate;
                 hrDisplay.classList.add('recent-hr');
                 hrDisplay.addEventListener('animationend', () => {
                     hrDisplay.classList.remove('recent-hr');
                 }, { once: true });
 
-
-                // Update stats
                 hrValues.push(heartRate);
                 if (hrValues.length > 20) {
-                    hrValues.shift(); // Keep the last 20 readings
+                    hrValues.shift();
                 }
 
                 minHr = Math.min(...hrValues);
                 maxHr = Math.max(...hrValues);
 
-                // Calculate Exponential Moving Average for a smoother average
                 if (smoothedHr === 0) {
                     smoothedHr = heartRate;
                 } else {
@@ -289,25 +282,23 @@
          * @returns {number|null} The parsed heart rate or null if not found.
          */
         function parseHeartRate(value) {
-            const flags = value.getUint8(0);
-            const is16BitFormat = flags & 0x01;
             const rawData = new Uint8Array(value.buffer);
-
-            // Standard Bluetooth Heart Rate Profile
-            if (is16BitFormat) {
-                // 16-bit heart rate value
-                return value.getUint16(1, true); // true for little-endian
-            } else {
-                // 8-bit heart rate value
+            
+            // Standard Bluetooth Heart Rate Profile (Flags in first byte)
+            const flags = value.getUint8(0);
+            if ((flags & 0x01) === 0) { // 8-bit heart rate
                 let hr = value.getUint8(1);
-                if (hr > 40 && hr < 220) return hr; // Basic validation
+                if (hr > 30 && hr < 230) return hr;
+            } else { // 16-bit heart rate
+                let hr = value.getUint16(1, true); // true for little-endian
+                if (hr > 30 && hr < 230) return hr;
             }
 
             // --- Fallback for Proprietary Formats ---
-            // Many devices (like Mi Bands, etc.) send HR in the second byte of a longer array.
+            // Many devices send HR in the second byte of a longer array without flags.
             if (rawData.length > 1) {
                 let hr = rawData[1];
-                if (hr > 40 && hr < 220) {
+                if (hr > 30 && hr < 230) {
                     log(`(Fallback) Found potential HR at byte 1: ${hr}`);
                     return hr;
                 }
@@ -316,13 +307,12 @@
             // Another common pattern is the third byte
             if (rawData.length > 2) {
                 let hr = rawData[2];
-                if (hr > 40 && hr < 220) {
+                if (hr > 30 && hr < 230) {
                     log(`(Fallback) Found potential HR at byte 2: ${hr}`);
                     return hr;
                 }
             }
 
-            // If all else fails, return null
             return null;
         }
 
