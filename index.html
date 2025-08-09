@@ -150,61 +150,92 @@
         async function connectDevice() {
             try {
                 const device = await navigator.bluetooth.requestDevice({
-                    filters: [{ namePrefix: 'LEAP CALL' }],
-                    optionalServices: ['heart_rate', '0000aaaa-0000-1000-8000-aabbccddeeff']
+                    acceptAllDevices: true,
+                    optionalServices: [
+                        // Standard Heart Rate Services
+                        'heart_rate',
+                        '0x180D',
+                        '0000180d-0000-1000-8000-00805f9b34fb',
+                        
+                        // Generic Services
+                        'generic_access',
+                        'device_information',
+                        'battery_service',
+                        
+                        // Common proprietary services
+                        '0000fee0-0000-1000-8000-00805f9b34fb', // Xiaomi Mi Band
+                        '6E400001-B5A3-F393-E0A9-E50E24DCCA9E', // Nordic UART
+                        'adabfb00-6e7d-4601-bda2-bffaa68956ba', // Fitbit-style
+                        
+                        // Add more as needed
+                        '00006287-3c17-d293-8e48-14fe2e4da212', // From your screenshot
+                        '0000d0ff-3c17-d293-8e48-14fe2e4da212'  // From your screenshot
+                    ]
                 });
 
                 log(`Connected to: ${device.name}`);
                 const server = await device.gatt.connect();
 
-                // Heart Rate
-                const hrService = await server.getPrimaryService('heart_rate');
-                const hrChar = await hrService.getCharacteristic(0x2A37);
+                // Try all possible heart rate service UUIDs
+                const heartRateServices = [
+                    'heart_rate',
+                    '0000180d-0000-1000-8000-00805f9b34fb',
+                    '00006287-3c17-d293-8e48-14fe2e4da212',
+                    '0000d0ff-3c17-d293-8e48-14fe2e4da212'
+                ];
 
-                // Explicitly enable notifications by writing to CCCD
-                const cccd = await hrChar.getDescriptor(0x2902);
-                await cccd.writeValue(new Uint8Array([1, 0]));
-                log('CCCD written to enable notifications');
+                const heartRateCharacteristics = [
+                    'heart_rate_measurement',
+                    '00002a37-0000-1000-8000-00805f9b34fb',
+                    '0x2A37'
+                ];
 
-                hrChar.addEventListener('characteristicvaluechanged', e => {
-                    const value = e.target.value;
-                    const raw = new Uint8Array(value.buffer);
-                    log(`HR raw data: [${Array.from(raw).join(', ')}]`);
+                for (const serviceUUID of heartRateServices) {
+                    try {
+                        const hrService = await server.getPrimaryService(serviceUUID);
+                        log(`Found heart rate service: ${serviceUUID}`);
 
-                    // Parse according to BLE Heart Rate Measurement format
-                    const flags = value.getUint8(0);
-                    let index = 1;
-                    let rate;
-                    if ((flags & 0x01) === 0) {
-                        rate = value.getUint8(index);
-                        index += 1;
-                    } else {
-                        rate = value.getUint16(index, true);
-                        index += 2;
+                        for (const charUUID of heartRateCharacteristics) {
+                            try {
+                                const hrChar = await hrService.getCharacteristic(charUUID);
+                                log(`Found heart rate characteristic: ${charUUID}`);
+
+                                hrChar.addEventListener('characteristicvaluechanged', (e) => {
+                                    const value = e.target.value;
+                                    let flags = value.getUint8(0);
+                                    let rate16Bits = flags & 0x01;
+                                    let bpm = rate16Bits ? value.getUint16(1, true) : value.getUint8(1);
+
+                                    document.getElementById('hr').textContent = bpm;
+                                    hrValues.push(bpm);
+                                    if (hrValues.length > 10) hrValues.shift();
+
+                                    emaHr = calculateEMA(bpm, emaHr);
+                                    document.getElementById('avgHr').textContent = emaHr.toFixed(1);
+
+                                    updateStats();
+                                    log(`HR: ${bpm} bpm`);
+                                });
+
+                                await hrChar.startNotifications();
+                                log('Heart rate notifications started successfully!');
+                                return; // Exit if successful
+                            } catch (charError) {
+                                log(`Characteristic ${charUUID} not found: ${charError.message}`);
+                            }
+                        }
+                    } catch (serviceError) {
+                        log(`Service ${serviceUUID} not found: ${serviceError.message}`);
                     }
+                }
 
-                    if (rate > 0 && rate < 250) { // Valid HR range
-                        document.getElementById('hr').textContent = rate;
-                        hrValues.push(rate);
-                        if (hrValues.length > 100) hrValues.shift(); // Keep more for stats
-                        
-                        // Update EMA immediately
-                        emaHr = calculateEMA(rate, emaHr);
-                        document.getElementById('avgHr').textContent = emaHr.toFixed(1);
-                        
-                        updateStats();
-                    }
-                });
-                await hrChar.startNotifications();
-                log('Heart rate notifications started');
-
-                // SpO2 investigation (optional, can be removed if not needed)
-                await investigateSpo2(server);
+                log('No heart rate service found with any known UUID', true);
 
             } catch (error) {
-                log(`Error: ${error.message}`, true);
+                log(`Connection error: ${error.message}`, true);
             }
         }
+
 
         async function investigateSpo2(server) {
             try {
