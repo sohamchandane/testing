@@ -97,12 +97,10 @@
         let hrValues = [];
         let minHr = Infinity;
         let maxHr = -Infinity;
-        let smoothedHr = 0; // Using an Exponential Moving Average (EMA)
+        let smoothedHr = 0;
 
         /**
          * Logs messages to the debug console on the webpage.
-         * @param {string} message - The message to log.
-         * @param {string} type - 'info', 'error', 'success', 'data'.
          */
         function log(message, type = 'info') {
             const timestamp = new Date().toLocaleTimeString();
@@ -124,16 +122,23 @@
                 log('Requesting Bluetooth device...');
                 statusEl.textContent = 'Status: Searching...';
                 
+                // **UPDATED:** We are now requesting a wider range of possible proprietary services.
+                // This is our best chance to get the OS to reveal the hidden HR service.
+                const servicesToRequest = [
+                    'heart_rate',
+                    '0000180d-0000-1000-8000-00805f9b34fb', // Standard Heart Rate
+                    '0000fee0-0000-1000-8000-00805f9b34fb', // Common Xiaomi/Huami
+                    '0000fee1-0000-1000-8000-00805f9b34fb', // Another common one
+                    '0000f0f0-0000-1000-8000-00805f9b34fb', // Generic
+                    '0000aaa0-0000-1000-8000-aabbccddeeff', // From your screenshot info
+                    '6e400001-b5a3-f393-e0a9-e50e24dcca9e', // Nordic Semiconductor UART
+                ];
+
+                log(`Requesting device with optional services: ${servicesToRequest.join(', ')}`);
+
                 bluetoothDevice = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
-                    // **UPDATED:** Requesting specific proprietary services increases our chances
-                    // of finding the correct one for the BOAT LEAP CALL.
-                    optionalServices: [
-                        'heart_rate', // Standard Heart Rate Service
-                        '0000180d-0000-1000-8000-00805f9b34fb', // Full UUID for Heart Rate
-                        '0000fee0-0000-1000-8000-00805f9b34fb', // Common Xiaomi/Huami
-                        '0000aaa0-0000-1000-8000-aabbccddeeff', // From your screenshot
-                    ]
+                    optionalServices: servicesToRequest
                 });
 
                 log(`Connecting to ${bluetoothDevice.name || 'Unnamed Device'}...`, 'success');
@@ -169,9 +174,8 @@
         }
 
         /**
-         * **UPDATED:** This function now discovers ALL services and characteristics,
-         * logging their properties and subscribing to any that can notify or indicate.
-         * @param {BluetoothRemoteGATTServer} server - The GATT server instance.
+         * Discovers ALL services and characteristics, logging their properties
+         * and subscribing to any that can notify or indicate.
          */
         async function findAllServicesAndCharacteristics(server) {
             try {
@@ -179,8 +183,13 @@
                 const allServices = await server.getPrimaryServices();
                 log(`Found ${allServices.length} services. Inspecting them...`);
 
+                if (allServices.length === 0) {
+                    log('No services found. Try pairing the device in your OS Bluetooth settings first.', 'error');
+                    return;
+                }
+
                 for (const service of allServices) {
-                    log(`Inspecting Service: ${service.uuid}`);
+                    log(`Inspecting Service: ${service.uuid}`, 'success');
                     try {
                         const characteristics = await service.getCharacteristics();
                         if (characteristics.length === 0) {
@@ -190,7 +199,6 @@
                         log(`  -> Found ${characteristics.length} characteristics.`);
 
                         for (const char of characteristics) {
-                            // Build properties string for detailed logging
                             const props = [];
                             if (char.properties.read) props.push('READ');
                             if (char.properties.write) props.push('WRITE');
@@ -199,10 +207,9 @@
                             if (char.properties.indicate) props.push('INDICATE');
                             log(`  - Char: ${char.uuid} [Properties: ${props.join(', ')}]`);
 
-                            // Subscribe to any characteristic that can send data updates.
                             if (char.properties.notify || char.properties.indicate) {
-                                log(`    Found NOTIFY/INDICATE property. Subscribing for data...`, 'success');
-                                await startHrNotifications(char);
+                                log(`    Found NOTIFY/INDICATE property. Subscribing for data...`);
+                                await startNotifications(char);
                             }
                         }
                     } catch (error) {
@@ -219,23 +226,20 @@
         }
 
         /**
-         * Starts notifications for a given characteristic and attaches the event listener.
-         * @param {BluetoothRemoteGATTCharacteristic} characteristic
+         * Starts notifications for a given characteristic.
          */
-        async function startHrNotifications(characteristic) {
+        async function startNotifications(characteristic) {
             try {
                 characteristic.addEventListener('characteristicvaluechanged', handleHeartRateData);
                 await characteristic.startNotifications();
-                log(`Started listening to notifications from ${characteristic.uuid}`, 'success');
+                log(`    -> Successfully started listening to notifications from ${characteristic.uuid}`, 'success');
             } catch (error) {
-                log(`Failed to start notifications on ${characteristic.uuid}: ${error.message}`, 'error');
+                log(`    -> Failed to start notifications on ${characteristic.uuid}: ${error.message}`, 'error');
             }
         }
 
         /**
          * This function is called every time the watch sends data.
-         * It tries to parse the heart rate from the raw data.
-         * @param {Event} event - The event object from the characteristic.
          */
         function handleHeartRateData(event) {
             const characteristic = event.target;
@@ -247,7 +251,7 @@
             let heartRate = parseHeartRate(value);
 
             if (heartRate !== null) {
-                log(`Successfully parsed Heart Rate: ${heartRate} bpm`, 'success');
+                log(`Successfully parsed Heart Rate: ${heartRate} bpm from ${characteristic.uuid}`, 'success');
                 
                 hrDisplay.textContent = heartRate;
                 hrDisplay.classList.add('recent-hr');
@@ -278,8 +282,6 @@
         
         /**
          * Tries various methods to parse the heart rate from a DataView object.
-         * @param {DataView} value - The data from the Bluetooth characteristic.
-         * @returns {number|null} The parsed heart rate or null if not found.
          */
         function parseHeartRate(value) {
             const rawData = new Uint8Array(value.buffer);
@@ -295,22 +297,21 @@
             }
 
             // --- Fallback for Proprietary Formats ---
-            // Many devices send HR in the second byte of a longer array without flags.
-            if (rawData.length > 1) {
-                let hr = rawData[1];
-                if (hr > 30 && hr < 230) {
-                    log(`(Fallback) Found potential HR at byte 1: ${hr}`);
-                    return hr;
-                }
-            }
-            
-            // Another common pattern is the third byte
-            if (rawData.length > 2) {
-                let hr = rawData[2];
-                if (hr > 30 && hr < 230) {
-                    log(`(Fallback) Found potential HR at byte 2: ${hr}`);
-                    return hr;
-                }
+            // **UPDATED:** More aggressive search for a valid HR value in the data packet.
+            for (let i = 0; i < rawData.length; i++) {
+                 let hr = rawData[i];
+                 if (hr > 30 && hr < 230) {
+                     // Check if the next byte is 0, a common pattern
+                     if (i + 1 < rawData.length && rawData[i+1] === 0) {
+                         log(`(Fallback) Found potential HR at byte ${i}: ${hr}`);
+                         return hr;
+                     }
+                     // If it's just a single byte that looks right, let's try it
+                     if(rawData.length < 4){
+                        log(`(Fallback) Found potential HR at byte ${i}: ${hr}`);
+                        return hr;
+                     }
+                 }
             }
 
             return null;
