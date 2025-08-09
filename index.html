@@ -1,72 +1,107 @@
-<button id="connect">Connect Smartwatch</button>
-<pre id="log"></pre>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Heart Rate Monitor</title>
+<style>
+    body { font-family: Arial; background: #f2f2f2; margin: 20px; }
+    button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    button:disabled { background: #aaa; cursor: not-allowed; }
+    #stats, #history { background: white; padding: 15px; margin: 15px 0; border-radius: 8px; }
+    #history span.recent { color: green; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<button id="connect">Connect to Smartwatch</button>
+
+<div id="stats">
+    <div>Current Heart Rate: <span id="hr">--</span> bpm</div>
+    <div>Average: <span id="avg">--</span> bpm</div>
+    <div>Min: <span id="min">--</span> bpm</div>
+    <div>Max: <span id="max">--</span> bpm</div>
+</div>
+
+<div id="history">
+    Recent: <span id="list">--</span>
+</div>
+
+<pre id="log" style="background:black;color:#0f0;padding:10px;height:150px;overflow:auto;border-radius:5px;"></pre>
 
 <script>
-const logEl = document.getElementById('log');
-function log(msg) {
-  logEl.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
-  logEl.scrollTop = logEl.scrollHeight;
+const logBox = document.getElementById("log");
+const hrElem = document.getElementById("hr");
+const avgElem = document.getElementById("avg");
+const minElem = document.getElementById("min");
+const maxElem = document.getElementById("max");
+const listElem = document.getElementById("list");
+
+let hrValues = [];
+
+function log(msg, error=false) {
+    const time = new Date().toLocaleTimeString();
+    logBox.innerHTML += `[${time}] ${msg}\n`;
+    logBox.scrollTop = logBox.scrollHeight;
 }
 
-async function connectDevice() {
-  try {
-    const device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: [] // Try to discover everything
-    });
-    log(`Selected device: ${device.name || device.id}`);
+function updateStats() {
+    if (!hrValues.length) return;
+    const avg = (hrValues.reduce((a,b) => a+b) / hrValues.length).toFixed(1);
+    const min = Math.min(...hrValues);
+    const max = Math.max(...hrValues);
+    const recent = hrValues.slice(-10);
 
-    const server = await device.gatt.connect();
-    log('Connected.');
-
-    const services = await server.getPrimaryServices();
-    if (!services.length) {
-      log("⚠ No services found — device may be idle, require pairing, or not BLE.");
-      return;
-    }
-    log(`Found ${services.length} services.`);
-
-    for (const service of services) {
-      log(`🔹 Service: ${service.uuid}`);
-      const characteristics = await service.getCharacteristics();
-
-      for (const char of characteristics) {
-        const props = Object.entries(char.properties)
-          .filter(([k, v]) => v)
-          .map(([k]) => k)
-          .join(',');
-        log(`  ➤ Char: ${char.uuid} props: ${props}`);
-
-        // Try reading if possible
-        if (char.properties.read) {
-          try {
-            const val = await char.readValue();
-            const raw = new Uint8Array(val.buffer);
-            log(`    📖 Read: [${Array.from(raw).join(', ')}]`);
-          } catch (err) {
-            log(`    ❌ Read failed: ${err.message}`);
-          }
-        }
-
-        // Subscribe if possible
-        if (char.properties.notify || char.properties.indicate) {
-          try {
-            await char.startNotifications();
-            char.addEventListener('characteristicvaluechanged', e => {
-              const raw = new Uint8Array(e.target.value.buffer);
-              log(`    🔔 Notify: [${Array.from(raw).join(', ')}]`);
-            });
-            log(`    ✅ Subscribed for notifications`);
-          } catch (err) {
-            log(`    ❌ Notify failed: ${err.message}`);
-          }
-        }
-      }
-    }
-  } catch (err) {
-    log(`Error: ${err.message}`);
-  }
+    avgElem.textContent = avg;
+    minElem.textContent = min;
+    maxElem.textContent = max;
+    listElem.innerHTML = recent.map((v,i) =>
+        i === recent.length - 1 ? `<span class="recent">${v}</span>` : v
+    ).join(", ");
 }
 
-document.getElementById('connect').addEventListener('click', connectDevice);
+async function connectHeartRate() {
+    try {
+        log("Requesting Bluetooth device...");
+        const device = await navigator.bluetooth.requestDevice({
+            acceptAllDevices: true,
+            optionalServices: ["heart_rate"]
+        });
+
+        device.addEventListener('gattserverdisconnected', () => {
+            log("Device disconnected", true);
+        });
+
+        log(`Connecting to ${device.name || "Unknown Device"}...`);
+        const server = await device.gatt.connect();
+
+        log("Getting Heart Rate service...");
+        const service = await server.getPrimaryService("heart_rate");
+
+        log("Getting Heart Rate Measurement characteristic...");
+        const char = await service.getCharacteristic(0x2A37);
+
+        char.addEventListener("characteristicvaluechanged", event => {
+            const value = event.target.value;
+            let flags = value.getUint8(0);
+            let rate16bits = flags & 0x01;
+            let bpm = rate16bits ? value.getUint16(1, true) : value.getUint8(1);
+
+            hrElem.textContent = bpm;
+            hrValues.push(bpm);
+            updateStats();
+            log(`Heart Rate: ${bpm} bpm`);
+        });
+
+        await char.startNotifications();
+        log("Heart rate notifications started. Start measurement on your watch.");
+
+    } catch (error) {
+        log("Error: " + error, true);
+    }
+}
+
+document.getElementById("connect").addEventListener("click", connectHeartRate);
 </script>
+
+</body>
+</html>
