@@ -3,316 +3,293 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smartwatch Heart Rate Monitor</title>
-    <!-- Using Tailwind CSS for a modern look -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Smartwatch Debugger</title>
     <style>
-        /* Custom font and minor style adjustments */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f0f2f5;
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f2f2f2;
+            color: #333;
         }
-        /* Style for the debug log */
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background: #007bff;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+        }
+
+        button:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+        }
+
+        button + button {
+            margin-left: 10px;
+        }
+
+        #data, #averages {
+            margin: 20px 0;
+            padding: 15px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        #data span, #averages span {
+            font-weight: bold;
+            color: #007bff;
+        }
+
+        #hrHistory {
+            margin-top: 10px;
+            font-size: 14px;
+        }
+
         #debug {
-            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-            font-size: 0.8rem;
-            line-height: 1.4;
+            background: #000;
+            color: #0f0;
+            padding: 15px;
+            font-family: monospace;
+            height: 200px;
+            overflow-y: auto;
+            border-radius: 8px;
         }
-        .recent-hr {
-            animation: highlight 1s ease-out;
+
+        #minmax {
+            margin: 20px 0;
+            padding: 15px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }
-        @keyframes highlight {
-            from { background-color: #4ade80; }
-            to { background-color: transparent; }
+
+        #minmax span {
+            font-weight: bold;
+            color: #007bff;
+        }
+
+        .recent {
+            color: #28a745 !important;
         }
     </style>
 </head>
-<body class="antialiased text-gray-800">
+<body>
+    <button id="connect">Connect Smartwatch</button>
 
-    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
-        <header class="text-center mb-8">
-            <h1 class="text-4xl font-bold text-gray-900">Smartwatch Heart Rate Monitor</h1>
-            <p class="text-lg text-gray-600 mt-2">Connect your Bluetooth heart rate device.</p>
-        </header>
-
-        <!-- Main controls -->
-        <div class="bg-white p-6 rounded-2xl shadow-lg mb-6 text-center">
-            <button id="connectBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg text-lg transition-transform transform hover:scale-105">
-                Connect to Device
-            </button>
-            <p id="status" class="text-gray-500 mt-4 text-sm">Status: Disconnected</p>
-        </div>
-
-        <!-- Heart Rate Data Display -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-            <div class="bg-white p-6 rounded-2xl shadow-lg text-center">
-                <p class="text-lg text-gray-500 mb-2">Current Heart Rate</p>
-                <p id="hrDisplay" class="text-6xl font-bold text-red-500">--</p>
-                <p class="text-lg text-gray-500">bpm</p>
-            </div>
-            <div class="bg-white p-6 rounded-2xl shadow-lg text-center">
-                <p class="text-lg text-gray-500 mb-2">Min / Max</p>
-                <p class="text-4xl font-semibold"><span id="minHr">--</span> / <span id="maxHr">--</span></p>
-                <p class="text-lg text-gray-500 mt-2">Lowest / Highest</p>
-            </div>
-            <div class="bg-white p-6 rounded-2xl shadow-lg text-center">
-                <p class="text-lg text-gray-500 mb-2">Smoothed Average</p>
-                <p id="avgHr" class="text-4xl font-semibold">--</p>
-                <p class="text-lg text-gray-500 mt-2">Recent Trend</p>
-            </div>
-        </div>
-        
-        <!-- Recent Readings -->
-        <div class="bg-white p-6 rounded-2xl shadow-lg mb-6">
-             <h3 class="font-semibold text-lg mb-2">Recent Readings</h3>
-             <p id="hrHistory" class="text-gray-600 text-lg">--</p>
-        </div>
-
-        <!-- Debugging and Service Discovery -->
-        <div class="bg-white p-6 rounded-2xl shadow-lg">
-            <h3 class="font-semibold text-lg mb-3">Developer Log & Discovered Services</h3>
-            <p class="text-sm text-gray-600 mb-4">
-                If heart rate doesn't appear, connect your device and watch this log. It will show all data received from your watch. Look for a pattern in the numbers that matches your heart rate.
-            </p>
-            <div id="debug" class="bg-gray-900 text-green-400 p-4 rounded-lg h-64 overflow-y-auto">
-                [Ready] Waiting for connection...
-            </div>
-        </div>
+    <div id="data">
+        <div>Heart Rate: <span id="hr">--</span> bpm</div>
+        <div>SpO2: <span id="spo2">--</span>%</div>
+        <div id="hrHistory">Recent Heart Rates: <span id="hrList">--</span></div>
     </div>
 
-    <script>
-        // DOM Elements
-        const connectBtn = document.getElementById('connectBtn');
-        const statusEl = document.getElementById('status');
-        const hrDisplay = document.getElementById('hrDisplay');
-        const minHrEl = document.getElementById('minHr');
-        const maxHrEl = document.getElementById('maxHr');
-        const avgHrEl = document.getElementById('avgHr');
-        const hrHistoryEl = document.getElementById('hrHistory');
-        const debugLog = document.getElementById('debug');
+    <div id="averages">
+        <div>Average Heart Rate: <span id="avgHr">--</span> bpm</div>
+        <div>Average SpO2: <span id="avgSpo2">--</span>%</div>
+    </div>
 
-        // State variables
-        let bluetoothDevice = null;
+    <!-- Add this new div -->
+    <div id="minmax">
+        <div>Min Heart Rate: <span id="minHr">--</span> bpm</div>
+        <div>Max Heart Rate: <span id="maxHr">--</span> bpm</div>
+    </div>
+
+    <div id="debug"></div>
+
+    <script>
+        const debug = document.getElementById('debug');
         let hrValues = [];
+        let spo2Values = [];
         let minHr = Infinity;
         let maxHr = -Infinity;
-        let smoothedHr = 0;
+        let emaHr = 0;
+        const alpha = 0.2; // Smoothing factor (0-1), higher means more weight to recent values
 
-        /**
-         * Logs messages to the debug console on the webpage.
-         */
-        function log(message, type = 'info') {
-            const timestamp = new Date().toLocaleTimeString();
-            const colorMap = {
-                'info': 'text-gray-400',
-                'error': 'text-red-500 font-semibold',
-                'success': 'text-green-400 font-semibold',
-                'data': 'text-cyan-400'
-            };
-            debugLog.innerHTML += `<div class="${colorMap[type]}">[${timestamp}] ${message}</div>`;
-            debugLog.scrollTop = debugLog.scrollHeight;
+        function calculateEMA(currentValue, previousEMA) {
+            if (previousEMA === 0) return currentValue; // Initial case
+            return alpha * currentValue + (1 - alpha) * previousEMA;
         }
 
-        /**
-         * Handles the connection process to the Bluetooth device.
-         */
-        connectBtn.addEventListener('click', async () => {
-            try {
-                log('Requesting Bluetooth device...');
-                statusEl.textContent = 'Status: Searching...';
-                
-                // **UPDATED STRATEGY:** Instead of guessing services, we filter by the device name.
-                // This is a more direct way to request a specific device and can reveal hidden services.
-                log("Attempting to connect by filtering for device name 'LEAP CALL'...");
+        function updateStats() {
+            const avg = arr => arr.length ? (arr.reduce((a, b) => a + b) / arr.length).toFixed(1) : '--';
+            
+            // Update heart rate list with highlighting for most recent
+            const recentHrValues = hrValues.slice(-10);
+            if (recentHrValues.length > 0) {
+                const hrListElement = document.getElementById('hrList');
+                hrListElement.innerHTML = recentHrValues.map((val, idx) => 
+                    idx === recentHrValues.length - 1 ? 
+                    `<span class="recent">${val}</span>` : 
+                    val
+                ).join(', ');
+            } else {
+                document.getElementById('hrList').textContent = '--';
+            }
 
-                bluetoothDevice = await navigator.bluetooth.requestDevice({
-                    filters: [{ name: 'LEAP CALL' }],
-                    // We still list optionalServices to hint that we want everything.
+            // Update averages
+            document.getElementById('avgHr').textContent = avg(hrValues);
+            document.getElementById('avgSpo2').textContent = avg(spo2Values);
+
+            // Update min/max
+            if (hrValues.length > 0) {
+                minHr = Math.min(...hrValues);
+                maxHr = Math.max(...hrValues);
+                document.getElementById('minHr').textContent = minHr;
+                document.getElementById('maxHr').textContent = maxHr;
+            }
+
+            // Update EMA for heart rate
+            if (hrValues.length > 0) {
+                const currentHr = hrValues[hrValues.length - 1];
+                emaHr = calculateEMA(currentHr, emaHr);
+                document.getElementById('avgHr').textContent = emaHr.toFixed(1);
+            }
+        }
+
+        async function connectDevice() {
+            try {
+                const device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
                     optionalServices: [
-                        'heart_rate',
-                        '00001800-0000-1000-8000-00805f9b34fb',
-                        '00001801-0000-1000-8000-00805f9b34fb',
-                        '0000180d-0000-1000-8000-00805f9b34fb',
-                        '0000fee0-0000-1000-8000-00805f9b34fb',
-                        '0000aaa0-0000-1000-8000-aabbccddeeff',
-                        '0000180d-0000-1000-8000-00805f9b34fb',
-                        '00002a37-0000-1000-8000-00805f9b34fb',
-                        '00002a38-0000-1000-8000-00805f9b34fb',
-                        '00002a39-0000-1000-8000-00805f9b34fb',
-                        '0000fee0-0000-1000-8000-00805f9b34fb',
-                        '00000001-0000-3512-2118-0009af100700'
+                        0x180D, // Heart Rate Service (short-form)
+                        0x1822, // Pulse Oximeter Service (short-form)
+                        "heart_rate",
+                        '00006287-3c17-d293-8e48-14fe2e4da212', // Proprietary
+                        '0000d0ff-3c17-d293-8e48-14fe2e4da212', // Proprietary
+                        '0000d0ff-3c17-d293-8e48-14fe2e4da212',
+                        '00006287-3c17-d293-8e48-14fe2e4da212'
                     ]
                 });
 
-                log(`Connecting to ${bluetoothDevice.name || 'Unnamed Device'}...`, 'success');
-                statusEl.textContent = `Status: Connecting to ${bluetoothDevice.name}...`;
-                
-                bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
-                
-                const server = await bluetoothDevice.gatt.connect();
-                log('GATT Server connected. Discovering services...', 'success');
-                statusEl.textContent = 'Status: Discovering Services...';
+                log(`Connected to: ${device.name}`);
+                const server = await device.gatt.connect();
 
-                await findAllServicesAndCharacteristics(server);
+                // Heart Rate
+                const hrService = await server.getPrimaryService('heart_rate'); // Short-form UUID
+                const hrChar = await hrService.getCharacteristic(0x2A37); // Short-form UUID
+                hrChar.addEventListener('characteristicvaluechanged', e => {
+                    const value = e.target.value;
+                    const rate = value.getUint8(1);
+                    document.getElementById('hr').textContent = rate;
+                    hrValues.push(rate);
+                    if (hrValues.length > 10) hrValues.shift();
+                    
+                    // Update EMA immediately when new heart rate arrives
+                    emaHr = calculateEMA(rate, emaHr);
+                    document.getElementById('avgHr').textContent = emaHr.toFixed(1);
+                    
+                    updateStats();
+                });
+                await hrChar.startNotifications();
+                log('Heart rate notifications started');
 
-            } catch (error) {
-                log(`Connection failed: ${error}`, 'error');
-                statusEl.textContent = `Status: Error - ${error.message}`;
+                // SpO2
+                await investigateSpo2(server);
+
+            } 
+            catch (error) {
+                log(`Error: ${error.message}`, true);
             }
-        });
-        
-        /**
-         * Cleans up when the device disconnects.
-         */
-        function onDisconnected() {
-            log('Device disconnected.', 'error');
-            statusEl.textContent = 'Status: Disconnected';
-            bluetoothDevice = null;
-            // Reset UI
-            hrDisplay.textContent = '--';
-            minHrEl.textContent = '--';
-            maxHrEl.textContent = '--';
-            avgHrEl.textContent = '--';
-            hrHistoryEl.textContent = '--';
         }
 
-        /**
-         * Discovers ALL services and characteristics, logging their properties
-         * and subscribing to any that can notify or indicate.
-         */
-        async function findAllServicesAndCharacteristics(server) {
+        async function investigateSpo2(server) {
             try {
-                log('Searching all services...');
-                const allServices = await server.getPrimaryServices();
-                log(`Found ${allServices.length} services. Inspecting them...`);
+                // Focus on both potential SpO2 services
+                const services = [
+                    '00006287-3c17-d293-8e48-14fe2e4da212',
+                    '0000d0ff-3c17-d293-8e48-14fe2e4da212'
+                ];
 
-                if (allServices.length === 0) {
-                    log('No services found. Try pairing the device in your OS Bluetooth settings first.', 'error');
-                    return;
-                }
-
-                for (const service of allServices) {
-                    log(`Inspecting Service: ${service.uuid}`, 'success');
+                for (const serviceUUID of services) {
                     try {
+                        const service = await server.getPrimaryService(serviceUUID);
+                        log(`Investigating service: ${serviceUUID}`);
+                        
                         const characteristics = await service.getCharacteristics();
-                        if (characteristics.length === 0) {
-                            log(`  -> Service has no characteristics.`, 'info');
-                            continue;
-                        }
-                        log(`  -> Found ${characteristics.length} characteristics.`);
+                        log(`Found ${characteristics.length} characteristics`);
+                        
+                        for (const characteristic of characteristics) {
+                            const props = characteristic.properties;
+                            const availableProps = Object.entries(props)
+                                .filter(([_, v]) => v)
+                                .map(([k, _]) => k)
+                                .join(', ');
+                            
+                            log(`Characteristic ${characteristic.uuid}`);
+                            log(`Properties: ${availableProps}`);
 
-                        for (const char of characteristics) {
-                            const props = [];
-                            if (char.properties.read) props.push('READ');
-                            if (char.properties.write) props.push('WRITE');
-                            if (char.properties.writeWithoutResponse) props.push('WRITE_NO_RESPONSE');
-                            if (char.properties.notify) props.push('NOTIFY');
-                            if (char.properties.indicate) props.push('INDICATE');
-                            log(`  - Char: ${char.uuid} [Properties: ${props.join(', ')}]`);
+                            // Only set up notifications, awriting to characteristics
+                            if (props.notify) {
+                                await characteristic.startNotifications();
+                                log(`Started notifications for ${characteristic.uuid}`);
 
-                            if (char.properties.notify || char.properties.indicate) {
-                                log(`    Found NOTIFY/INDICATE property. Subscribing for data...`);
-                                await startNotifications(char);
+                                characteristic.addEventListener('characteristicvaluechanged', (e) => {
+                                    try {
+                                        const value = e.target.value;
+                                        const raw = new Uint8Array(value.buffer);
+                                        log(`Raw data from ${characteristic.uuid}: [${Array.from(raw).join(', ')}]`);
+
+                                        // Try different parsing methods without modifying the device
+                                        let spo2Value = null;
+                                        
+                                        // Only process data if it matches expected SpO2 patterns
+                                        if (raw.length >= 2) {
+                                            if (characteristic.uuid.includes('6387') || 
+                                                characteristic.uuid.includes('6487')) {
+                                                spo2Value = raw[1]; // Try second byte
+                                            }
+                                        }
+
+                                        if (isValidSpO2(spo2Value)) {
+                                            updateSpO2Display(spo2Value);
+                                            log(`Valid SpO2 reading from ${characteristic.uuid}: ${spo2Value}%`);
+                                        }
+                                    } catch (err) {
+                                        log(`Error processing data: ${err.message}`, true);
+                                    }
+                                });
                             }
                         }
-                    } catch (error) {
-                        log(`  -> Error getting characteristics for this service: ${error.message}`, 'error');
+                    } catch (serviceErr) {
+                        log(`Service ${serviceUUID} error: ${serviceErr.message}`);
                     }
                 }
-                log('Finished searching all services. Waiting for data...');
-                statusEl.textContent = 'Status: Connected & Listening';
-
-            } catch (error) {
-                log(`Error finding services: ${error}`, 'error');
-                statusEl.textContent = `Status: Error - ${error.message}`;
+            } catch (err) {
+                log(`SpO2 investigation error: ${err.message}`, true);
             }
         }
 
-        /**
-         * Starts notifications for a given characteristic.
-         */
-        async function startNotifications(characteristic) {
-            try {
-                characteristic.addEventListener('characteristicvaluechanged', handleHeartRateData);
-                await characteristic.startNotifications();
-                log(`    -> Successfully started listening to notifications from ${characteristic.uuid}`, 'success');
-            } catch (error) {
-                log(`    -> Failed to start notifications on ${characteristic.uuid}: ${error.message}`, 'error');
+        // Update validation to be more strict
+        function isValidSpO2(value) {
+            // SpO2 values are typically between 90 and 100
+            // Allow slightly wider range for edge cases
+            return typeof value === 'number' && value >= 85 && value <= 100;
+        }
+
+        // Update display function to be more robust
+        function updateSpO2Display(value) {
+            // Only update if we have a valid value
+            if (isValidSpO2(value)) {
+                document.getElementById('spo2').textContent = value.toFixed(1);
+                spo2Values.push(Number(value));
+                if (spo2Values.length > 10) spo2Values.shift();
+                updateStats();
+                log(`Updated SpO2 display: ${value}%`);
             }
         }
 
-        /**
-         * This function is called every time the watch sends data.
-         */
-        function handleHeartRateData(event) {
-            const characteristic = event.target;
-            const value = characteristic.value;
-            const rawData = new Uint8Array(value.buffer);
-            
-            log(`Data from [${characteristic.uuid}]: [${rawData.join(', ')}]`, 'data');
-
-            let heartRate = parseHeartRate(value);
-
-            if (heartRate !== null) {
-                log(`Successfully parsed Heart Rate: ${heartRate} bpm from ${characteristic.uuid}`, 'success');
-                
-                hrDisplay.textContent = heartRate;
-                hrDisplay.classList.add('recent-hr');
-                hrDisplay.addEventListener('animationend', () => {
-                    hrDisplay.classList.remove('recent-hr');
-                }, { once: true });
-
-                hrValues.push(heartRate);
-                if (hrValues.length > 20) {
-                    hrValues.shift();
-                }
-
-                minHr = Math.min(...hrValues);
-                maxHr = Math.max(...hrValues);
-
-                if ( smoothedHr === 0 ) {
-                    smoothedHr = heartRate;
-                } else {
-                    smoothedHr = (heartRate * 0.2) + (smoothedHr * 0.8);
-                }
-
-                minHrEl.textContent = minHr;
-                maxHrEl.textContent = maxHr;
-                avgHrEl.textContent = smoothedHr.toFixed(1);
-                hrHistoryEl.textContent = hrValues.slice(-10).join(', ');
-            }
-        }
-        
-        /**
-         * Tries various methods to parse the heart rate from a DataView object.
-         */
-        function parseHeartRate(value) {
-            const rawData = new Uint8Array(value.buffer);
-            
-            // Standard Bluetooth Heart Rate Profile (Flags in first byte)
-            const flags = value.getUint8(0);
-            if ((flags & 0x01) === 0) { // 8-bit heart rate
-                let hr = value.getUint8(1);
-                if (hr > 30 && hr < 230) return hr;
-            } else { // 16-bit heart rate
-                let hr = value.getUint16(1, true); // true for little-endian
-                if (hr > 30 && hr < 230) return hr;
-            }
-
-            // --- Fallback for Proprietary Formats ---
-            // Aggressively search the entire data packet for a valid HR value.
-            for (let i = 0; i < rawData.length; i++) {
-                 let hr = rawData[i];
-                 if (hr > 30 && hr < 230) {
-                    log(`(Fallback) Found potential HR at byte ${i}: ${hr}`);
-                    return hr;
-                 }
-            }
-
-            return null;
+        function log(message, isError = false) {
+            const line = document.createElement('div');
+            line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            line.style.color = isError ? '#f00' : '#0f0';
+            debug.appendChild(line);
+            debug.scrollTop = debug.scrollHeight;
         }
 
+        document.getElementById('connect').addEventListener('click', connectDevice);
     </script>
 </body>
 </html>
