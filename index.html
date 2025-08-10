@@ -54,6 +54,11 @@
         .recent {
             color: #28a745 !important;
         }
+
+        #graph {
+            height: 400px;
+            width: 100%;
+        }
     </style>
 </head>
 <body>
@@ -70,7 +75,7 @@
         <div>Max Heart Rate: <span id="maxHr">--</span> bpm</div>
     </div>
 
-    <div id="graph" style="height:400px;"></div>
+    <div id="graph"></div>
 
     <div id="debug"></div>
 
@@ -132,8 +137,9 @@
                 title: 'Heart Rate over Time',
                 xaxis: { title: 'Sample Number' },
                 yaxis: { title: 'Heart Rate (bpm)' },
-                legend: { orientation: 'h', y: 1.2, x: 0.5, xanchor: 'center' }
-            });
+                legend: { orientation: 'h', y: 1.15, x: 0.5, xanchor: 'center' },
+                margin: { l: 50, r: 20, t: 60, b: 50 }, // Reduced left/right margin
+            }, { responsive: true });
         }
 
         async function connectDevice() {
