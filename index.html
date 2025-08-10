@@ -131,7 +131,8 @@
             Plotly.newPlot('graph', [trace1, trace2], {
                 title: 'Heart Rate over Time',
                 xaxis: { title: 'Sample Number' },
-                yaxis: { title: 'Heart Rate (bpm)' }
+                yaxis: { title: 'Heart Rate (bpm)' },
+                legend: { orientation: 'h', y: 1.2, x: 0.5, xanchor: 'center' }
             });
         }
 
@@ -174,6 +175,12 @@
         }
 
         document.getElementById('connect').addEventListener('click', connectDevice);
+
+        // Preload empty graph on page load
+        window.addEventListener('load', () => {
+            hrValues = [];
+            plotGraph();
+        });
     </script>
 </body>
 </html>
